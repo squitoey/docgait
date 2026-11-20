@@ -421,3 +421,88 @@ table.list td.path {
 table.help td {
   white-space: nowrap;
 }
+
+/* Import */
+.check-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 6px 0;
+  border-bottom: 1px solid var(--line);
+}
+.check-row:last-child {
+  border-bottom: none;
+}
+.check-row .grow {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.choices.two {
+  grid-template-columns: repeat(2, 1fr);
+}
+.field input[type="text"] {
+  width: 100%;
+}
+.progress {
+  margin: 10px 0;
+}
+.progress .bar {
+  height: 6px;
+  border-radius: 3px;
+  background: var(--accent);
+  margin-bottom: 4px;
+  transition: width 0.2s;
+}
+.stats {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 10px;
+  margin-bottom: 10px;
+}
+.stat {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 10px;
+}
+.stat .value {
+  font-size: 22px;
+  font-weight: 600;
+}
+.stat.strong .value {
+  color: var(--accent);
+}
+.stat .label,
+.stat .sub {
+  font-size: 12px;
+  color: var(--muted);
+}
+details {
+  margin: 12px 0;
+}
+details summary {
+  cursor: pointer;
+  font-size: 13px;
+}
+.conflicts {
+  max-height: 320px;
+  overflow-y: auto;
+  margin-top: 8px;
+}
+.conflict {
+  border-left: 3px solid var(--warn);
+  padding: 4px 10px;
+  margin: 6px 0;
+  overflow-wrap: anywhere;
+}
+.filelist {
+  max-height: 320px;
+  overflow-y: auto;
+  padding-left: 18px;
+  overflow-wrap: anywhere;
+  user-select: text;
+}
+.section-title {
+  margin: 20px 0 8px;
+}

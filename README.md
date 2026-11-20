@@ -3,9 +3,9 @@
 A personal, local-first document manager: merge scattered copies of your files into one organised
 library, remove duplicates, browse and search everything. Nothing leaves your machine.
 
-Status: **M1**. Libraries, sources, a names-only background scan with sensible excludes,
-live updates from a filesystem watcher, filename/path search, and a desktop app to browse and
-search the result. The full plan is in
+Status: **M2, slice 1**. Libraries, sources, a names-only background scan with sensible
+excludes, live updates, filename/path search, and **import into the library**: merge several
+copies of your data into one folder without duplicates, with a preview first and undo after. The full plan is in
 [plan/docgait-plan.md](plan/docgait-plan.md).
 
 ## Layout
@@ -53,12 +53,38 @@ docgait sources set 2 --exclude 'private/' --include .vscode
 docgait ls ~/Documents/Taxes --sort size    # list a folder from the index
 docgait search taxes 2023 type:pdf          # names and folder paths; see below
 docgait status
+docgait library-folder ~/Library-Folder     # this library's folder (where imports go)
+docgait import ~/OldLaptop ~/Backup2019     # preview: what would be copied, skipped, in conflict
+docgait import --resume 1 --yes             # do it (or resume an interrupted import)
+docgait history                             # imports so far
+docgait undo 1 --yes                        # undo an import: its copies go to the trash
 docgait libraries create Work               # libraries are fully separate
 docgait -L Work scan ~/WorkDrive
 ```
 
 Use `--data-dir <dir>` (or `DOCGAIT_DATA_DIR`) to work on a separate index, which is handy for
 experiments.
+
+## Import into the library
+
+Pick sources (or folders inside them) and merge them into the library folder:
+
+- **Merge folders** (default) combines matching paths: `OldLaptop/Taxes/W2.pdf` and
+  `Backup2019/Taxes/W2.pdf` both map to `Library/Taxes/W2.pdf`. **Own folder** puts each source in
+  a folder named after it.
+- Files already anywhere in the library are skipped. The same file appearing several times comes
+  in once (the copy with the cleanest name). Files are compared by size, then a partial hash, then
+  a full BLAKE3 hash, and only when needed; hashes are cached in the index.
+- **Conflicts** (same path, different contents): every version is kept, next to each other. The
+  suggested version keeps the name (a healthy file beats an empty one, then the newest), the
+  others become `name.conflict-<source>-<date>.ext`. If the dates cannot be trusted (seconds
+  apart, an exact number of hours apart, or obviously wrong), the conflict is marked *needs
+  review* instead of guessing.
+- Nothing is copied until you confirm. Every copy is verified by hash, written under a temporary
+  name first, and journaled. An interrupted import resumes; a whole import can be undone (copies
+  go to the trash, renames are reversed). Sources are never changed.
+
+`DOCGAIT_TRASH_DIR=<folder>` replaces the OS trash with a plain folder, for experiments.
 
 ## Search
 

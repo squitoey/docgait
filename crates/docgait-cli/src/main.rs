@@ -6,7 +6,7 @@ use std::sync::atomic::AtomicBool;
 
 use anyhow::{bail, Result};
 use clap::{Parser, Subcommand, ValueEnum};
-use docgait_core::{scan, App, IndexLevel, Library, Role, SortBy};
+use docgait_core::{scan, App, ImportProgress, IndexLevel, Layout, Library, Role, SortBy};
 
 #[derive(Parser)]
 #[command(
@@ -63,6 +63,37 @@ enum Cmd {
         limit: usize,
         #[arg(long)]
         json: bool,
+    },
+    /// Show or set this library's folder (where imports go).
+    LibraryFolder { path: Option<PathBuf> },
+    /// Import folders into the library folder. A dry run unless --yes is given.
+    Import {
+        /// Folders (inside sources) to import; a source root imports the whole source.
+        #[arg(num_args = 0..)]
+        folders: Vec<PathBuf>,
+        /// Folder inside the library to import into (default: the library root).
+        #[arg(long, default_value = "")]
+        dest: String,
+        /// merge: combine matching paths; own-folder: each imported folder gets its own folder.
+        #[arg(long, value_enum, default_value_t = LayoutArg::Merge)]
+        layout: LayoutArg,
+        /// Carry out the plan.
+        #[arg(long)]
+        yes: bool,
+        /// Run (or resume) a plan made earlier instead of making a new one.
+        #[arg(long)]
+        resume: Option<i64>,
+        /// Also list every file to be copied.
+        #[arg(long)]
+        list: bool,
+    },
+    /// Recent imports and other undoable actions.
+    History,
+    /// Undo an import (or other action) by its batch number from `docgait history`.
+    Undo {
+        batch: i64,
+        #[arg(long)]
+        yes: bool,
     },
     /// Counts for the current library.
     Status {
@@ -135,6 +166,12 @@ enum LevelArg {
     Names,
     Full,
     Agent,
+}
+
+#[derive(Clone, Copy, ValueEnum)]
+enum LayoutArg {
+    Merge,
+    OwnFolder,
 }
 
 #[derive(Clone, Copy, ValueEnum)]
@@ -222,6 +259,76 @@ fn run(cli: Cli) -> Result<()> {
                 if r.more { " (more: use --limit)" } else { "" },
                 started.elapsed().as_millis()
             );
+            Ok(())
+        }
+        Cmd::LibraryFolder { path } => {
+            match path {
+                Some(p) => {
+                    let s = lib.set_library_folder(&p)?;
+                    app.set_library_root(lib.info.id, &p)?;
+                    println!("library folder: {}", s.root);
+                    if !scan::has_scanned(&lib, s.id)? {
+                        let cancel = AtomicBool::new(false);
+                        let sum = scan::scan_source(&lib, s.id, &|_| {}, &cancel)?;
+                        println!("scanned: {} files", sum.files);
+                    }
+                }
+                None => match lib.library_source()? {
+                    Some(s) => println!("{}", s.root),
+                    None => println!("no library folder yet: docgait library-folder <path>"),
+                },
+            }
+            Ok(())
+        }
+        Cmd::Import {
+            folders,
+            dest,
+            layout,
+            yes,
+            resume,
+            list,
+        } => import_cmd(&lib, folders, &dest, layout, yes, resume, list),
+        Cmd::History => {
+            let h = lib.history(30)?;
+            if h.is_empty() {
+                println!("nothing yet");
+            }
+            for b in h {
+                println!(
+                    "{:>4}  {}  {:<8} {:<8} {}  ({} done{})",
+                    b.id,
+                    fmt_time(b.created_at),
+                    b.kind,
+                    b.state,
+                    b.description,
+                    b.done,
+                    if b.undone > 0 {
+                        format!(", {} undone", b.undone)
+                    } else {
+                        String::new()
+                    }
+                );
+            }
+            Ok(())
+        }
+        Cmd::Undo { batch, yes } => {
+            if !yes {
+                let b = lib
+                    .history(1000)?
+                    .into_iter()
+                    .find(|b| b.id == batch)
+                    .ok_or_else(|| anyhow::anyhow!("no batch {batch}"))?;
+                println!(
+                    "would undo batch {}: {} ({} file operations). Copies go to the trash. Add --yes to do it.",
+                    b.id, b.description, b.done
+                );
+                return Ok(());
+            }
+            let r = lib.undo_batch(batch)?;
+            println!("undone: {} operations, {} failed", r.undone, r.failed);
+            for e in r.errors {
+                println!("  {e}");
+            }
             Ok(())
         }
         Cmd::Status { json } => {
@@ -429,6 +536,128 @@ fn libraries(app: &App, cmd: Option<&LibrariesCmd>) -> Result<()> {
         }
     }
     Ok(())
+}
+
+fn import_cmd(
+    lib: &Library,
+    folders: Vec<PathBuf>,
+    dest: &str,
+    layout: LayoutArg,
+    yes: bool,
+    resume: Option<i64>,
+    list: bool,
+) -> Result<()> {
+    let cancel = AtomicBool::new(false);
+    let progress = |p: &ImportProgress| {
+        if p.total > 0 {
+            eprint!("\r{}: {}/{}   ", p.phase, p.done, p.total);
+            let _ = std::io::stderr().flush();
+        }
+    };
+    let plan = match resume {
+        Some(run) => lib.import_plan(run)?,
+        None => {
+            if folders.is_empty() {
+                bail!("name at least one folder to import (or --resume <plan>)");
+            }
+            let ids = folders
+                .iter()
+                .map(|p| lib.folder_for_path(p).map(|f| f.id))
+                .collect::<Result<Vec<_>>>()?;
+            let layout = match layout {
+                LayoutArg::Merge => Layout::Merge,
+                LayoutArg::OwnFolder => Layout::OwnFolder,
+            };
+            let p = lib.plan_import(&ids, dest, layout, &progress, &cancel)?;
+            eprintln!();
+            p
+        }
+    };
+    println!("plan {} → {}", plan.run_id, plan.dest_path);
+    println!("  {} files looked at", plan.files);
+    println!("  {} to copy ({})", plan.to_copy, human(plan.bytes_to_copy));
+    println!("  {} already in the library", plan.skipped_in_library);
+    println!("  {} duplicates (come in once)", plan.skipped_duplicate);
+    println!(
+        "  {} conflicts{}",
+        plan.conflicts,
+        if plan.needs_review > 0 {
+            format!(
+                " ({} need review: dates cannot be trusted)",
+                plan.needs_review
+            )
+        } else {
+            String::new()
+        }
+    );
+    let lib_root = lib.library_source()?.map(|s| s.root).unwrap_or_default();
+    let short = |p: &str| {
+        p.strip_prefix(&lib_root)
+            .map(|r| format!("library{r}"))
+            .unwrap_or_else(|| p.to_string())
+    };
+    let conflicts = lib.import_items(plan.run_id, None, true, 0, 60)?;
+    if !conflicts.is_empty() {
+        println!("conflicts (all versions are kept, next to each other):");
+        let mut last = None;
+        for c in &conflicts {
+            if c.conflict_id != last {
+                println!("  •");
+                last = c.conflict_id;
+            }
+            println!(
+                "    {} ← {}  ({})",
+                short(c.to_path.as_deref().unwrap_or("")),
+                short(&c.from_path),
+                c.note.as_deref().unwrap_or("")
+            );
+        }
+    }
+    if list {
+        for it in lib.import_items(plan.run_id, Some("copy"), false, 0, 100_000)? {
+            println!(
+                "  copy {} → {}",
+                it.from_path,
+                it.to_path.unwrap_or_default()
+            );
+        }
+    }
+    if !yes {
+        println!(
+            "dry run: nothing copied. Run `docgait import --resume {} --yes` to do it.",
+            plan.run_id
+        );
+        return Ok(());
+    }
+    let res = lib.execute_import(plan.run_id, &progress, &cancel)?;
+    eprintln!();
+    println!(
+        "copied {} files ({}), {} renamed to make room, {} failed. Undo with `docgait undo {}`.",
+        res.copied,
+        human(res.bytes as i64),
+        res.renamed,
+        res.failed,
+        res.batch_id
+    );
+    for e in res.errors {
+        println!("  {e}");
+    }
+    Ok(())
+}
+
+fn fmt_time(secs: i64) -> String {
+    // Local time without pulling in a date crate: let the OS format it when available.
+    let d = std::time::UNIX_EPOCH + std::time::Duration::from_secs(secs.max(0) as u64);
+    let ago = std::time::SystemTime::now()
+        .duration_since(d)
+        .map(|x| x.as_secs())
+        .unwrap_or(0);
+    match ago {
+        0..=59 => "just now".into(),
+        60..=3599 => format!("{}m ago", ago / 60),
+        3600..=86_399 => format!("{}h ago", ago / 3600),
+        _ => format!("{}d ago", ago / 86_400),
+    }
 }
 
 fn human(bytes: i64) -> String {
