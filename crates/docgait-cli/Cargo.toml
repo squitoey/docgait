@@ -1,0 +1,15 @@
+[package]
+name = "docgait-cli"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[[bin]]
+name = "docgait"
+path = "src/main.rs"
+
+[dependencies]
+anyhow = "1"
+clap = { version = "4", features = ["derive", "env"] }
+docgait-core = { path = "../docgait-core" }
+serde_json = "1"

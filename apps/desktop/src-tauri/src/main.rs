@@ -1,0 +1,447 @@
+// Desktop shell: translates UI calls into docgait-core calls. No logic of its own.
+#![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
+
+use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex, RwLock};
+use std::time::{Duration, Instant};
+
+use crossbeam_channel::{unbounded, Receiver, Sender};
+use docgait_core::watch::{self, SourceWatcher};
+use docgait_core::{
+    scan, App, Cursor, IndexLevel, Library, LibraryInfo, Listing, Role, ScanProgress, ScanSummary,
+    SearchResults, SortBy, Source, Status,
+};
+use serde::Serialize;
+use tauri::{AppHandle, Emitter, Manager, State};
+
+const LAST_LIBRARY: &str = "last_library_id";
+
+type CmdResult<T> = Result<T, String>;
+
+fn err<E: std::fmt::Display>(e: E) -> String {
+    format!("{e:#}")
+}
+
+/// A request for the background scan worker. Scans run one at a time, off the UI thread.
+struct ScanRequest {
+    lib: Arc<Library>,
+    source_id: Option<i64>,
+    /// A folder inside the source (from the file watcher): a quick, quiet rescan of just that.
+    scope: Option<String>,
+}
+
+struct AppState {
+    app: Arc<App>,
+    current: RwLock<Arc<Library>>,
+    scan_tx: Sender<ScanRequest>,
+    scanning: Arc<AtomicBool>,
+    cancel: Arc<AtomicBool>,
+    watcher: Mutex<Option<SourceWatcher>>,
+}
+
+impl AppState {
+    fn lib(&self) -> Arc<Library> {
+        self.current
+            .read()
+            .unwrap_or_else(|e| e.into_inner())
+            .clone()
+    }
+
+    /// (Re)starts watching the current library's online sources. Changes become quiet folder
+    /// rescans on the scan worker.
+    fn restart_watcher(&self) {
+        let mut slot = self.watcher.lock().unwrap_or_else(|e| e.into_inner());
+        *slot = None; // stop the old watcher first
+        let lib = self.lib();
+        let sources: Vec<(i64, PathBuf)> = lib
+            .sources()
+            .unwrap_or_default()
+            .into_iter()
+            .filter(|s| s.online)
+            .map(|s| (s.id, PathBuf::from(s.root)))
+            .collect();
+        if sources.is_empty() {
+            return;
+        }
+        let tx = self.scan_tx.clone();
+        let result = watch::watch(sources, move |changes| {
+            for c in changes {
+                let _ = tx.send(ScanRequest {
+                    lib: lib.clone(),
+                    source_id: Some(c.source_id),
+                    scope: Some(c.rel),
+                });
+            }
+        });
+        match result {
+            Ok((w, problems)) => {
+                for p in problems {
+                    eprintln!("not watching {p}");
+                }
+                *slot = Some(w);
+            }
+            Err(e) => eprintln!("file watching is off: {e:#}"),
+        }
+    }
+
+    /// Full rescan of every source in the current library.
+    fn rescan_all(&self) {
+        let _ = self.scan_tx.send(ScanRequest {
+            lib: self.lib(),
+            source_id: None,
+            scope: None,
+        });
+    }
+}
+
+#[derive(Serialize)]
+struct AppInfo {
+    libraries: Vec<LibraryInfo>,
+    current: LibraryInfo,
+    data_dir: String,
+    scanning: bool,
+}
+
+#[derive(Serialize, Clone)]
+struct ProgressEvent {
+    library_id: i64,
+    #[serde(flatten)]
+    progress: ScanProgress,
+}
+
+#[derive(Serialize, Clone)]
+struct FinishedEvent {
+    library_id: i64,
+    summary: Option<ScanSummary>,
+    error: Option<String>,
+}
+
+#[derive(Serialize, Clone)]
+struct ChangedEvent {
+    library_id: i64,
+}
+
+#[tauri::command(async)]
+fn app_info(state: State<AppState>) -> CmdResult<AppInfo> {
+    Ok(AppInfo {
+        libraries: state.app.libraries().map_err(err)?,
+        current: state.lib().info.clone(),
+        data_dir: state.app.data_dir().to_string_lossy().to_string(),
+        scanning: state.scanning.load(Ordering::Relaxed),
+    })
+}
+
+#[tauri::command(async)]
+fn create_library(state: State<AppState>, name: String) -> CmdResult<LibraryInfo> {
+    state.app.create_library(&name).map_err(err)
+}
+
+#[tauri::command(async)]
+fn rename_library(state: State<AppState>, id: i64, name: String) -> CmdResult<()> {
+    state.app.rename_library(id, &name).map_err(err)?;
+    let lib = state.lib();
+    if lib.info.id == id {
+        // Reopen so the in-memory name matches.
+        let reopened = Arc::new(state.app.open_library(id).map_err(err)?);
+        *state.current.write().unwrap_or_else(|e| e.into_inner()) = reopened;
+    }
+    Ok(())
+}
+
+#[tauri::command(async)]
+fn switch_library(state: State<AppState>, id: i64) -> CmdResult<LibraryInfo> {
+    let lib = Arc::new(state.app.open_library(id).map_err(err)?);
+    let info = lib.info.clone();
+    *state.current.write().unwrap_or_else(|e| e.into_inner()) = lib;
+    state
+        .app
+        .set_setting(LAST_LIBRARY, &id.to_string())
+        .map_err(err)?;
+    state.restart_watcher();
+    state.rescan_all();
+    Ok(info)
+}
+
+#[tauri::command(async)]
+fn sources(state: State<AppState>) -> CmdResult<Vec<Source>> {
+    state.lib().sources().map_err(err)
+}
+
+/// Adds a folder as a source and queues a scan of it.
+#[tauri::command(async)]
+fn add_source(
+    state: State<AppState>,
+    path: String,
+    role: String,
+    level: Option<String>,
+) -> CmdResult<Source> {
+    let role = Role::parse(&role).map_err(err)?;
+    let level = level
+        .map(|l| IndexLevel::parse(&l))
+        .transpose()
+        .map_err(err)?;
+    let lib = state.lib();
+    let source = lib.add_source(Path::new(&path), role, level).map_err(err)?;
+    let _ = state.scan_tx.send(ScanRequest {
+        lib,
+        source_id: Some(source.id),
+        scope: None,
+    });
+    state.restart_watcher();
+    Ok(source)
+}
+
+#[tauri::command(async)]
+fn remove_source(state: State<AppState>, id: i64) -> CmdResult<()> {
+    if state.scanning.load(Ordering::Relaxed) {
+        return Err("Wait for the scan to finish, or stop it, first.".into());
+    }
+    state.lib().remove_source(id).map_err(err)?;
+    state.restart_watcher();
+    Ok(())
+}
+
+#[tauri::command(async)]
+fn set_source_level(state: State<AppState>, id: i64, level: String) -> CmdResult<()> {
+    let level = IndexLevel::parse(&level).map_err(err)?;
+    state.lib().set_source_level(id, level).map_err(err)
+}
+
+#[tauri::command(async)]
+fn set_source_removable(state: State<AppState>, id: i64, removable: bool) -> CmdResult<()> {
+    state.lib().set_source_removable(id, removable).map_err(err)
+}
+
+#[tauri::command(async)]
+fn set_honor_ignore_files(state: State<AppState>, id: i64, on: bool) -> CmdResult<()> {
+    state.lib().set_honor_ignore_files(id, on).map_err(err)
+}
+
+/// Queues a scan of one source, or of every source.
+#[tauri::command]
+fn scan(state: State<AppState>, source_id: Option<i64>) -> CmdResult<()> {
+    state
+        .scan_tx
+        .send(ScanRequest {
+            lib: state.lib(),
+            source_id,
+            scope: None,
+        })
+        .map_err(err)
+}
+
+#[tauri::command]
+fn cancel_scan(state: State<AppState>) {
+    state.cancel.store(true, Ordering::SeqCst);
+}
+
+#[tauri::command(async)]
+fn list(
+    state: State<AppState>,
+    folder_id: i64,
+    sort: Option<SortBy>,
+    after: Option<Cursor>,
+    limit: Option<usize>,
+) -> CmdResult<Listing> {
+    state
+        .lib()
+        .list(
+            folder_id,
+            sort.unwrap_or_default(),
+            after.as_ref(),
+            limit.unwrap_or(500),
+        )
+        .map_err(err)
+}
+
+/// Searches names and paths in the current library.
+#[tauri::command(async)]
+fn search(state: State<AppState>, query: String, limit: Option<usize>) -> CmdResult<SearchResults> {
+    state
+        .lib()
+        .search(&query, limit.unwrap_or(200))
+        .map_err(err)
+}
+
+#[tauri::command(async)]
+fn status(state: State<AppState>) -> CmdResult<Status> {
+    state.lib().status().map_err(err)
+}
+
+/// Opens a file in its default app. Only ids from the index are accepted, never raw paths.
+#[tauri::command(async)]
+fn open_file(state: State<AppState>, id: i64) -> CmdResult<()> {
+    let path = state.lib().file_path(id).map_err(err)?;
+    let mut cmd = if cfg!(target_os = "macos") {
+        std::process::Command::new("/usr/bin/open")
+    } else if cfg!(windows) {
+        let mut c = std::process::Command::new("cmd");
+        c.args(["/C", "start", ""]);
+        c
+    } else {
+        std::process::Command::new("xdg-open")
+    };
+    cmd.arg(&path).spawn().map_err(err)?;
+    Ok(())
+}
+
+/// Shows a file (or folder, when `folder` is true) in the system file manager.
+#[tauri::command(async)]
+fn reveal(state: State<AppState>, id: i64, folder: Option<bool>) -> CmdResult<()> {
+    let lib = state.lib();
+    let path = if folder.unwrap_or(false) {
+        lib.folder_path(id)
+    } else {
+        lib.file_path(id)
+    }
+    .map_err(err)?;
+    let mut cmd;
+    if cfg!(target_os = "macos") {
+        cmd = std::process::Command::new("/usr/bin/open");
+        cmd.arg("-R").arg(&path);
+    } else if cfg!(windows) {
+        cmd = std::process::Command::new("explorer");
+        cmd.arg(format!("/select,{}", path.display()));
+    } else {
+        // No portable "select this file" on Linux; open the folder it is in.
+        cmd = std::process::Command::new("xdg-open");
+        cmd.arg(if path.is_dir() {
+            path.as_path()
+        } else {
+            path.parent().unwrap_or(&path)
+        });
+    }
+    cmd.spawn().map_err(err)?;
+    Ok(())
+}
+
+/// Runs queued scans one after another and reports progress as events.
+fn scan_worker(
+    handle: AppHandle,
+    rx: Receiver<ScanRequest>,
+    scanning: Arc<AtomicBool>,
+    cancel: Arc<AtomicBool>,
+) {
+    for req in rx {
+        let library_id = req.lib.info.id;
+        if let (Some(id), Some(rel)) = (req.source_id, req.scope.as_deref()) {
+            // Watcher-driven: small, quiet, no progress. A failure (e.g. the source was just
+            // removed) is not worth bothering anyone about; the next full scan settles it.
+            let never = AtomicBool::new(false);
+            if scan::scan_folder(&req.lib, id, rel, &|_| {}, &never).is_ok() {
+                let _ = handle.emit("index-changed", ChangedEvent { library_id });
+            }
+            continue;
+        }
+        scanning.store(true, Ordering::SeqCst);
+        cancel.store(false, Ordering::SeqCst);
+        let last_emit = Mutex::new(Instant::now() - Duration::from_secs(1));
+        let h = handle.clone();
+        let progress = move |p: &ScanProgress| {
+            // About four updates a second is plenty for a status bar.
+            let mut last = last_emit.lock().unwrap_or_else(|e| e.into_inner());
+            if last.elapsed() >= Duration::from_millis(250) {
+                *last = Instant::now();
+                let _ = h.emit(
+                    "scan-progress",
+                    ProgressEvent {
+                        library_id,
+                        progress: p.clone(),
+                    },
+                );
+            }
+        };
+        let results: Vec<Result<ScanSummary, String>> = match req.source_id {
+            Some(id) => vec![scan::scan_source(&req.lib, id, &progress, &cancel).map_err(err)],
+            None => match req.lib.sources() {
+                Ok(list) => list
+                    .into_iter()
+                    .filter(|s| s.online)
+                    .take_while(|_| !cancel.load(Ordering::Relaxed))
+                    .map(|s| scan::scan_source(&req.lib, s.id, &progress, &cancel).map_err(err))
+                    .collect(),
+                Err(e) => vec![Err(err(e))],
+            },
+        };
+        for r in results {
+            let (summary, error) = match r {
+                Ok(s) => (Some(s), None),
+                Err(e) => (None, Some(e)),
+            };
+            let _ = handle.emit(
+                "scan-finished",
+                FinishedEvent {
+                    library_id,
+                    summary,
+                    error,
+                },
+            );
+        }
+        let _ = handle.emit("index-changed", ChangedEvent { library_id });
+        scanning.store(false, Ordering::SeqCst);
+    }
+}
+
+fn open_initial_library(app: &App) -> anyhow::Result<Library> {
+    let wanted = app
+        .setting(LAST_LIBRARY)?
+        .and_then(|v| v.parse::<i64>().ok())
+        .and_then(|id| app.library_info(id).ok());
+    let info = match wanted {
+        Some(i) => i,
+        None => app.default_library()?,
+    };
+    app.open_library(info.id)
+}
+
+fn main() {
+    let app = Arc::new(App::open_default().expect("could not open the docgait data folder"));
+    let lib = Arc::new(open_initial_library(&app).expect("could not open the library index"));
+    let (scan_tx, scan_rx) = unbounded();
+    let scanning = Arc::new(AtomicBool::new(false));
+    let cancel = Arc::new(AtomicBool::new(false));
+
+    tauri::Builder::default()
+        .plugin(tauri_plugin_dialog::init())
+        .manage(AppState {
+            app,
+            current: RwLock::new(lib),
+            scan_tx,
+            scanning: scanning.clone(),
+            cancel: cancel.clone(),
+            watcher: Mutex::new(None),
+        })
+        .setup(move |a| {
+            let handle = a.handle().clone();
+            std::thread::Builder::new()
+                .name("scan-worker".into())
+                .spawn(move || scan_worker(handle, scan_rx, scanning, cancel))?;
+            // Catch up on changes made while the app was closed, then follow live changes.
+            let state = a.state::<AppState>();
+            state.rescan_all();
+            state.restart_watcher();
+            Ok(())
+        })
+        .invoke_handler(tauri::generate_handler![
+            app_info,
+            create_library,
+            rename_library,
+            switch_library,
+            sources,
+            add_source,
+            remove_source,
+            set_source_level,
+            set_source_removable,
+            set_honor_ignore_files,
+            scan,
+            cancel_scan,
+            list,
+            search,
+            status,
+            open_file,
+            reveal
+        ])
+        .run(tauri::generate_context!())
+        .expect("error while running docgait");
+}

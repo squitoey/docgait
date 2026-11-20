@@ -1,0 +1,16 @@
+[workspace]
+resolver = "2"
+members = ["crates/docgait-core", "crates/docgait-cli", "apps/desktop/src-tauri"]
+
+# The one place the version lives.
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+
+[profile.release]
+opt-level = 3
+
+# Hashing and walking are far too slow unoptimised, even in dev builds.
+[profile.dev.package."*"]
+opt-level = 3
