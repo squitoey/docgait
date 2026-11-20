@@ -39,7 +39,8 @@ export default function Sources({ sources, scanning, onChanged, onBrowse, onErro
   const add = async () => {
     if (!path) return;
     try {
-      await api.addSource(path, role, level);
+      if (role === "library") await api.setLibraryFolder(path);
+      else await api.addSource(path, role, level);
       setPath(null);
       onChanged();
     } catch (e) {

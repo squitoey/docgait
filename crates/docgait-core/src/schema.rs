@@ -119,4 +119,89 @@ pub const LIBRARY: &[&str] = &[
      END;
      INSERT INTO file_fts (rowid, name, path)
        SELECT f.id, f.name, d.rel_path FROM file f JOIN folder d ON d.id = f.folder_id;",
+    // 3: import into the library, the action journal (undo), and conflicts.
+    "-- One user action (an import, a clean-up, an undo-able organise step) = one batch.
+     CREATE TABLE batch (
+       id          INTEGER PRIMARY KEY,
+       kind        TEXT NOT NULL,              -- import | cleanup | organise
+       created_at  INTEGER NOT NULL,
+       description TEXT NOT NULL,
+       state       TEXT NOT NULL DEFAULT 'running'  -- running | done | partial | undone
+     );
+
+     -- Every file operation, written right after it happens; undo walks it backwards.
+     CREATE TABLE journal (
+       id           INTEGER PRIMARY KEY,
+       batch_id     INTEGER NOT NULL REFERENCES batch(id) ON DELETE CASCADE,
+       created_at   INTEGER NOT NULL,
+       op           TEXT NOT NULL,             -- copy | rename | mkdir | trash
+       from_path    TEXT,
+       to_path      TEXT,
+       size         INTEGER NOT NULL DEFAULT 0,
+       content_hash BLOB,
+       status       TEXT NOT NULL,             -- done | undone | failed
+       error        TEXT
+     );
+     CREATE INDEX journal_batch ON journal(batch_id);
+
+     CREATE TABLE import_run (
+       id                 INTEGER PRIMARY KEY,
+       created_at         INTEGER NOT NULL,
+       state              TEXT NOT NULL DEFAULT 'planned',  -- planned | running | done | partial | undone
+       library_source_id  INTEGER NOT NULL,
+       dest_rel           TEXT NOT NULL,       -- folder inside the library, '' = its root
+       layout             TEXT NOT NULL,       -- merge | own-folder
+       selection_json     TEXT NOT NULL,       -- folder ids that were imported
+       files              INTEGER NOT NULL DEFAULT 0,
+       to_copy            INTEGER NOT NULL DEFAULT 0,
+       bytes_to_copy      INTEGER NOT NULL DEFAULT 0,
+       skipped_in_library INTEGER NOT NULL DEFAULT 0,
+       skipped_duplicate  INTEGER NOT NULL DEFAULT 0,
+       conflicts          INTEGER NOT NULL DEFAULT 0,
+       needs_review       INTEGER NOT NULL DEFAULT 0,
+       batch_id           INTEGER REFERENCES batch(id),
+       finished_at        INTEGER
+     );
+
+     CREATE TABLE import_item (
+       id             INTEGER PRIMARY KEY,
+       run_id         INTEGER NOT NULL REFERENCES import_run(id) ON DELETE CASCADE,
+       seq            INTEGER NOT NULL,        -- execution order
+       action         TEXT NOT NULL,           -- copy | rename_existing | skip_in_library | skip_duplicate
+       source_file_id INTEGER,                 -- NULL for rename_existing
+       from_path      TEXT NOT NULL,           -- absolute
+       to_path        TEXT,                    -- absolute; NULL for skips
+       size           INTEGER NOT NULL,
+       mtime_ns       INTEGER NOT NULL,
+       content_hash   BLOB,
+       note           TEXT,                    -- e.g. where the library copy already is
+       conflict_id    INTEGER,
+       state          TEXT NOT NULL DEFAULT 'planned',  -- planned | done | failed | skipped
+       error          TEXT
+     );
+     CREATE INDEX import_item_run ON import_item(run_id, seq);
+
+     -- Different content arriving at the same path. Variants sit next to each other on disk as
+     -- <name>.conflict-<source>-<date>.<ext>; paths are stored so a rebuilt index still knows them.
+     CREATE TABLE conflict (
+       id             INTEGER PRIMARY KEY,
+       run_id         INTEGER REFERENCES import_run(id) ON DELETE SET NULL,
+       path           TEXT NOT NULL,           -- the real name (absolute)
+       state          TEXT NOT NULL,           -- needs_review | suggested | resolved
+       reason         TEXT NOT NULL,           -- clear_newest | dates_unreliable | broken_variant
+       created_at     INTEGER NOT NULL,
+       resolved_at    INTEGER,
+       resolution     TEXT
+     );
+     CREATE TABLE conflict_variant (
+       conflict_id    INTEGER NOT NULL REFERENCES conflict(id) ON DELETE CASCADE,
+       path           TEXT NOT NULL,           -- where this variant ends up (absolute)
+       origin         TEXT NOT NULL,           -- source name, or 'library'
+       origin_path    TEXT NOT NULL,           -- where it came from
+       size           INTEGER NOT NULL,
+       mtime_ns       INTEGER NOT NULL,
+       healthy        INTEGER NOT NULL,
+       is_suggested   INTEGER NOT NULL,        -- keeps the real name
+       PRIMARY KEY (conflict_id, path)
+     );",
 ];

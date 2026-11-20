@@ -2,10 +2,15 @@ import { useCallback, useEffect, useState } from "react";
 import { api, errorText, events, humanSize, type AppInfo, type ScanProgress, type Source, type Status } from "./api";
 import Browse from "./Browse";
 import Search from "./Search";
+import Import from "./Import";
 import Sources from "./Sources";
 import LibraryPicker from "./LibraryPicker";
 
-type View = { kind: "sources" } | { kind: "search" } | { kind: "browse"; folderId: number; highlight?: number };
+type View =
+  | { kind: "sources" }
+  | { kind: "search" }
+  | { kind: "import" }
+  | { kind: "browse"; folderId: number; highlight?: number };
 
 export default function App() {
   const [info, setInfo] = useState<AppInfo | null>(null);
@@ -102,6 +107,9 @@ export default function App() {
           >
             Sources
           </button>
+          <button className={view.kind === "import" ? "nav active" : "nav"} onClick={() => setView({ kind: "import" })}>
+            Import into library
+          </button>
           <div className="nav-heading">Browse</div>
           {sources.length === 0 && <div className="nav-empty">No sources yet</div>}
           {sources.map((s) => (
@@ -124,7 +132,9 @@ export default function App() {
       </aside>
 
       <main className="main">
-        {view.kind === "search" ? (
+        {view.kind === "import" ? (
+          <Import sources={sources} revision={revision} onChanged={refresh} onError={setMessage} />
+        ) : view.kind === "search" ? (
           <Search
             query={query}
             revision={revision}

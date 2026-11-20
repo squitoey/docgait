@@ -9,8 +9,9 @@ use std::time::{Duration, Instant};
 use crossbeam_channel::{unbounded, Receiver, Sender};
 use docgait_core::watch::{self, SourceWatcher};
 use docgait_core::{
-    scan, App, Cursor, IndexLevel, Library, LibraryInfo, Listing, Role, ScanProgress, ScanSummary,
-    SearchResults, SortBy, Source, Status,
+    scan, App, BatchInfo, Cursor, ImportItem, ImportPlan, ImportProgress, ImportResult, IndexLevel,
+    Layout, Library, LibraryInfo, Listing, Role, ScanProgress, ScanSummary, SearchResults, SortBy,
+    Source, Status, UndoResult,
 };
 use serde::Serialize;
 use tauri::{AppHandle, Emitter, Manager, State};
@@ -38,6 +39,7 @@ struct AppState {
     scanning: Arc<AtomicBool>,
     cancel: Arc<AtomicBool>,
     watcher: Mutex<Option<SourceWatcher>>,
+    import_cancel: Arc<AtomicBool>,
 }
 
 impl AppState {
@@ -255,6 +257,129 @@ fn list(
         .map_err(err)
 }
 
+#[tauri::command(async)]
+fn library_folder(state: State<AppState>) -> CmdResult<Option<Source>> {
+    state.lib().library_source().map_err(err)
+}
+
+/// Sets the current library's folder, then scans and watches it.
+#[tauri::command(async)]
+fn set_library_folder(state: State<AppState>, path: String) -> CmdResult<Source> {
+    let lib = state.lib();
+    let source = lib.set_library_folder(Path::new(&path)).map_err(err)?;
+    state
+        .app
+        .set_library_root(lib.info.id, Path::new(&path))
+        .map_err(err)?;
+    let _ = state.scan_tx.send(ScanRequest {
+        lib,
+        source_id: Some(source.id),
+        scope: None,
+    });
+    state.restart_watcher();
+    Ok(source)
+}
+
+/// Throttled progress events for import planning and copying.
+fn import_progress(handle: &AppHandle) -> impl Fn(&ImportProgress) + Sync + '_ {
+    let last = Mutex::new(Instant::now() - Duration::from_secs(1));
+    move |p: &ImportProgress| {
+        let mut l = last.lock().unwrap_or_else(|e| e.into_inner());
+        if l.elapsed() >= Duration::from_millis(200) || p.done == p.total {
+            *l = Instant::now();
+            let _ = handle.emit("import-progress", p.clone());
+        }
+    }
+}
+
+/// Builds an import plan (hashing what is needed). Nothing on disk changes.
+#[tauri::command(async)]
+fn plan_import(
+    handle: AppHandle,
+    state: State<AppState>,
+    folder_ids: Vec<i64>,
+    dest: String,
+    layout: Layout,
+) -> CmdResult<ImportPlan> {
+    state.import_cancel.store(false, Ordering::SeqCst);
+    let progress = import_progress(&handle);
+    state
+        .lib()
+        .plan_import(&folder_ids, &dest, layout, &progress, &state.import_cancel)
+        .map_err(err)
+}
+
+/// Carries out (or resumes) an import plan.
+#[tauri::command(async)]
+fn execute_import(
+    handle: AppHandle,
+    state: State<AppState>,
+    run_id: i64,
+) -> CmdResult<ImportResult> {
+    state.import_cancel.store(false, Ordering::SeqCst);
+    let lib = state.lib();
+    let progress = import_progress(&handle);
+    let res = lib
+        .execute_import(run_id, &progress, &state.import_cancel)
+        .map_err(err);
+    let _ = handle.emit(
+        "index-changed",
+        ChangedEvent {
+            library_id: lib.info.id,
+        },
+    );
+    res
+}
+
+#[tauri::command]
+fn cancel_import(state: State<AppState>) {
+    state.import_cancel.store(true, Ordering::SeqCst);
+}
+
+#[tauri::command(async)]
+fn import_plan(state: State<AppState>, run_id: i64) -> CmdResult<ImportPlan> {
+    state.lib().import_plan(run_id).map_err(err)
+}
+
+#[tauri::command(async)]
+fn import_items(
+    state: State<AppState>,
+    run_id: i64,
+    action: Option<String>,
+    conflicts_only: bool,
+    offset: Option<usize>,
+    limit: Option<usize>,
+) -> CmdResult<Vec<ImportItem>> {
+    state
+        .lib()
+        .import_items(
+            run_id,
+            action.as_deref(),
+            conflicts_only,
+            offset.unwrap_or(0),
+            limit.unwrap_or(200),
+        )
+        .map_err(err)
+}
+
+#[tauri::command(async)]
+fn history(state: State<AppState>) -> CmdResult<Vec<BatchInfo>> {
+    state.lib().history(50).map_err(err)
+}
+
+#[tauri::command(async)]
+fn undo_batch(handle: AppHandle, state: State<AppState>, batch_id: i64) -> CmdResult<UndoResult> {
+    let lib = state.lib();
+    let res = lib.undo_batch(batch_id).map_err(err);
+    let _ = handle.emit(
+        "index-changed",
+        ChangedEvent {
+            library_id: lib.info.id,
+        },
+    );
+    res
+}
+
 /// Searches names and paths in the current library.
 #[tauri::command(async)]
 fn search(state: State<AppState>, query: String, limit: Option<usize>) -> CmdResult<SearchResults> {
@@ -411,6 +536,7 @@ fn main() {
             scanning: scanning.clone(),
             cancel: cancel.clone(),
             watcher: Mutex::new(None),
+            import_cancel: Arc::new(AtomicBool::new(false)),
         })
         .setup(move |a| {
             let handle = a.handle().clone();
@@ -437,6 +563,15 @@ fn main() {
             scan,
             cancel_scan,
             list,
+            library_folder,
+            set_library_folder,
+            plan_import,
+            execute_import,
+            cancel_import,
+            import_plan,
+            import_items,
+            history,
+            undo_batch,
             search,
             status,
             open_file,
