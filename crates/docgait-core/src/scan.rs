@@ -74,13 +74,43 @@ pub fn scan_source(
     progress: ProgressFn,
     cancel: &AtomicBool,
 ) -> Result<ScanSummary> {
+    scan_scope(lib, source_id, None, progress, cancel)
+}
+
+/// Rescans one folder of a source (and everything below it), e.g. after the file watcher saw a
+/// change there. `rel` is relative to the source root, '/'-separated; "" means the whole source.
+pub fn scan_folder(
+    lib: &Library,
+    source_id: i64,
+    rel: &str,
+    progress: ProgressFn,
+    cancel: &AtomicBool,
+) -> Result<ScanSummary> {
+    let rel = rel.trim_matches('/');
+    scan_scope(
+        lib,
+        source_id,
+        (!rel.is_empty()).then_some(rel),
+        progress,
+        cancel,
+    )
+}
+
+fn scan_scope(
+    lib: &Library,
+    source_id: i64,
+    scope: Option<&str>,
+    progress: ProgressFn,
+    cancel: &AtomicBool,
+) -> Result<ScanSummary> {
     let started = Instant::now();
     let source = lib.source(source_id)?;
     let root = PathBuf::from(&source.root);
     if !root.is_dir() {
         bail!("{} is not available (offline or removed)", root.display());
     }
-    let walker = exclude::walker(&root, &source.walk_options())?;
+    let scope_path = scope.map(|rel| crate::library::join_rel(&root, rel));
+    let walker = exclude::walker(&root, &source.walk_options(), scope_path.as_deref())?;
 
     let gen: i64 = {
         let conn = lib.writer();
@@ -161,7 +191,7 @@ pub fn scan_source(
     sum.cancelled = cancel.load(Ordering::Relaxed);
     if !sum.cancelled {
         progress(&progress_of(&sum, "finishing"));
-        sum.gone = finish(lib, source_id, gen, source.removable)?;
+        sum.gone = finish(lib, source_id, gen, source.removable, scope)?;
     }
     sum.millis = started.elapsed().as_millis() as u64;
     progress(&progress_of(&sum, "finishing"));
@@ -370,46 +400,87 @@ fn ensure_folder(
 }
 
 /// After a complete walk: drop (or, on removable sources, flag) what was not seen, and refresh
-/// folder counts. Returns the number of files gone.
-fn finish(lib: &Library, source_id: i64, gen: i64, removable: bool) -> Result<u64> {
+/// folder counts. With `scope`, only that folder and below are considered. Returns the number of
+/// files gone.
+fn finish(
+    lib: &Library,
+    source_id: i64,
+    gen: i64,
+    removable: bool,
+    scope: Option<&str>,
+) -> Result<u64> {
+    // Folders in scope: the scope folder itself and everything below it.
+    let (in_scope, scope_arg) = match scope {
+        None => ("1", String::new()),
+        Some(rel) => (
+            "(rel_path = ?3 OR substr(rel_path, 1, length(?3) + 1) = ?3 || '/')",
+            rel.to_string(),
+        ),
+    };
     let mut conn = lib.writer();
     let tx = conn.transaction()?;
-    tx.execute(
-        "UPDATE folder SET seen_gen = ?2, state = 'present' WHERE source_id = ?1 AND rel_path = ''",
-        params![source_id, gen],
-    )?;
+    if scope.is_none() {
+        tx.execute(
+            "UPDATE folder SET seen_gen = ?2, state = 'present' WHERE source_id = ?1 AND rel_path = ''",
+            params![source_id, gen],
+        )?;
+    }
+    let scoped_files =
+        format!("folder_id IN (SELECT id FROM folder WHERE source_id = ?1 AND {in_scope})");
+    let run = |sql: &str| -> rusqlite::Result<usize> {
+        if scope.is_some() {
+            tx.execute(sql, params![source_id, gen, scope_arg])
+        } else {
+            tx.execute(sql, params![source_id, gen])
+        }
+    };
     let gone = if removable {
-        tx.execute(
-            "UPDATE folder SET state = 'missing' WHERE source_id = ?1 AND seen_gen < ?2",
-            params![source_id, gen],
-        )?;
-        tx.execute(
-            "UPDATE file SET state = 'missing' WHERE source_id = ?1 AND seen_gen < ?2 AND state <> 'missing'",
-            params![source_id, gen],
-        )?
+        run(&format!(
+            "UPDATE folder SET state = 'missing' WHERE source_id = ?1 AND seen_gen < ?2 AND {in_scope}"
+        ))?;
+        run(&format!(
+            "UPDATE file SET state = 'missing'
+              WHERE source_id = ?1 AND seen_gen < ?2 AND state <> 'missing' AND {scoped_files}"
+        ))?
     } else {
-        let n = tx.execute(
-            "DELETE FROM file WHERE source_id = ?1 AND seen_gen < ?2",
-            params![source_id, gen],
-        )?;
-        tx.execute(
-            "DELETE FROM folder WHERE source_id = ?1 AND seen_gen < ?2",
-            params![source_id, gen],
-        )?;
+        let n = run(&format!(
+            "DELETE FROM file WHERE source_id = ?1 AND seen_gen < ?2 AND {scoped_files}"
+        ))?;
+        run(&format!(
+            "DELETE FROM folder WHERE source_id = ?1 AND seen_gen < ?2 AND {in_scope}"
+        ))?;
         n
     };
-    tx.execute(
+    // Refresh counts for the folders in scope and the ones above it.
+    let mut targets = format!("source_id = ?1 AND {in_scope}");
+    let ancestors: Vec<String> = scope
+        .map(|rel| {
+            let parts: Vec<&str> = rel.split('/').collect();
+            (0..parts.len()).map(|n| parts[..n].join("/")).collect()
+        })
+        .unwrap_or_default();
+    if !ancestors.is_empty() {
+        let list = ancestors
+            .iter()
+            .map(|a| format!("'{}'", a.replace('\'', "''")))
+            .collect::<Vec<_>>()
+            .join(", ");
+        targets = format!("source_id = ?1 AND ({in_scope} OR rel_path IN ({list}))");
+    }
+    let counts = format!(
         "UPDATE folder SET
            file_count   = (SELECT COUNT(*) FROM file f WHERE f.folder_id = folder.id AND f.state = 'present'),
            total_size   = (SELECT COALESCE(SUM(size), 0) FROM file f WHERE f.folder_id = folder.id AND f.state = 'present'),
            folder_count = (SELECT COUNT(*) FROM folder c WHERE c.parent_id = folder.id AND c.state = 'present')
-         WHERE source_id = ?1",
-        [source_id],
-    )?;
-    tx.execute(
-        "UPDATE source SET last_scan_at = ?2 WHERE id = ?1",
-        params![source_id, db::now_secs()],
-    )?;
+         WHERE {targets} AND ?2 = ?2"
+    );
+    run(&counts)?;
+    if scope.is_none() {
+        tx.execute(
+            "UPDATE source SET last_scan_at = ?2 WHERE id = ?1",
+            params![source_id, db::now_secs()],
+        )?;
+    }
     tx.commit()?;
     Ok(gone as u64)
 }

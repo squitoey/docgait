@@ -3,8 +3,9 @@
 A personal, local-first document manager: merge scattered copies of your files into one organised
 library, remove duplicates, browse and search everything. Nothing leaves your machine.
 
-Status: **M0 (bootstrap)**. Libraries, sources, a names-only background scan with sensible
-excludes, and a desktop app to browse the result. The full plan is in
+Status: **M1**. Libraries, sources, a names-only background scan with sensible excludes,
+live updates from a filesystem watcher, filename/path search, and a desktop app to browse and
+search the result. The full plan is in
 [plan/docgait-plan.md](plan/docgait-plan.md).
 
 ## Layout
@@ -50,6 +51,7 @@ docgait sources                             # list sources
 docgait sources set 2 --removable on        # keep files that cannot be found (drives that come and go)
 docgait sources set 2 --exclude 'private/' --include .vscode
 docgait ls ~/Documents/Taxes --sort size    # list a folder from the index
+docgait search taxes 2023 type:pdf          # names and folder paths; see below
 docgait status
 docgait libraries create Work               # libraries are fully separate
 docgait -L Work scan ~/WorkDrive
@@ -57,6 +59,28 @@ docgait -L Work scan ~/WorkDrive
 
 Use `--data-dir <dir>` (or `DOCGAIT_DATA_DIR`) to work on a separate index, which is handy for
 experiments.
+
+## Search
+
+Names and folder paths for now (document contents come later). Every word must match, in the file
+name or anywhere in its folder path; matching is by substring, ignoring case and accents.
+
+| Input | Meaning |
+| --- | --- |
+| `lease renewal` | all words |
+| `"lease renewal"` | exact phrase |
+| `-draft`, `-"old copy"` | exclude |
+| `type:pdf` / `kind:image` | extension / kind |
+| `in:Taxes` | under a folder whose path contains the text |
+| `after:2024-01 before:2024-06` | modified date (year, month or day) |
+| `created-after:2023` | created date |
+| `size:>10mb`, `size:<1kb` | size |
+
+## Live updates
+
+While the app is open it watches every source (FSEvents on macOS, inotify on Linux) and rescans
+just the folder that changed, a second or so after the change. Changes made while it was closed
+are picked up by a rescan when it starts.
 
 ## What gets skipped
 

@@ -9,9 +9,12 @@ pub mod kind;
 pub mod library;
 pub mod scan;
 pub mod schema;
+pub mod search;
+pub mod watch;
 
 pub use app::{App, LibraryInfo};
 pub use library::{
     Cursor, FileEntry, Folder, IndexLevel, Library, Listing, Role, SortBy, Source, Status,
 };
 pub use scan::{ScanProgress, ScanSummary};
+pub use search::{SearchHit, SearchResults};

@@ -54,6 +54,16 @@ enum Cmd {
         #[arg(long)]
         json: bool,
     },
+    /// Search file names and folder paths. Words must all match; filters: type: kind: in:
+    /// after: before: created-after: created-before: size:>10mb; -word excludes; "a phrase".
+    Search {
+        #[arg(required = true, num_args = 1..)]
+        query: Vec<String>,
+        #[arg(long, default_value_t = 50)]
+        limit: usize,
+        #[arg(long)]
+        json: bool,
+    },
     /// Counts for the current library.
     Status {
         #[arg(long)]
@@ -189,6 +199,31 @@ fn run(cli: Cli) -> Result<()> {
             limit,
             json,
         } => ls(&lib, path, sort, limit, json),
+        Cmd::Search { query, limit, json } => {
+            let started = std::time::Instant::now();
+            let r = lib.search(&query.join(" "), limit)?;
+            if json {
+                println!("{}", serde_json::to_string_pretty(&r)?);
+                return Ok(());
+            }
+            for note in &r.unsupported {
+                eprintln!("note: ignored {note}");
+            }
+            for h in &r.hits {
+                let path = PathBuf::from(&h.source_root)
+                    .join(&h.folder_path)
+                    .join(&h.file.name);
+                println!("{:>10}  {}", human(h.file.size), path.display());
+            }
+            eprintln!(
+                "{} result{}{} in {} ms",
+                r.hits.len(),
+                if r.hits.len() == 1 { "" } else { "s" },
+                if r.more { " (more: use --limit)" } else { "" },
+                started.elapsed().as_millis()
+            );
+            Ok(())
+        }
         Cmd::Status { json } => {
             let s = lib.status()?;
             if json {

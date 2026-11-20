@@ -3,6 +3,8 @@ import { api, errorText, formatDate, humanSize, type FileEntry, type Listing, ty
 
 interface Props {
   folderId: number;
+  /** A file to select when the folder opens (e.g. from search). */
+  highlight?: number;
   revision: number;
   onNavigate: (folderId: number) => void;
   onError: (msg: string) => void;
@@ -11,16 +13,20 @@ interface Props {
 const PAGE = 500;
 
 /** One folder: breadcrumbs, subfolders, then files (keyset-paged, "Show more"). */
-export default function Browse({ folderId, revision, onNavigate, onError }: Props) {
+export default function Browse({ folderId, highlight, revision, onNavigate, onError }: Props) {
   const [listing, setListing] = useState<Listing | null>(null);
   const [files, setFiles] = useState<FileEntry[]>([]);
   const [sort, setSort] = useState<SortBy>("name");
-  const [selected, setSelected] = useState<number | null>(null);
+  const [selected, setSelected] = useState<number | null>(highlight ?? null);
   const [loadingMore, setLoadingMore] = useState(false);
+
+  // A new folder (or a new highlight) resets the selection; index refreshes keep it.
+  useEffect(() => {
+    setSelected(highlight ?? null);
+  }, [folderId, highlight]);
 
   useEffect(() => {
     let live = true;
-    setSelected(null);
     api
       .list(folderId, sort, null, PAGE)
       .then((l) => {

@@ -1,10 +1,11 @@
 import { useCallback, useEffect, useState } from "react";
 import { api, errorText, events, humanSize, type AppInfo, type ScanProgress, type Source, type Status } from "./api";
 import Browse from "./Browse";
+import Search from "./Search";
 import Sources from "./Sources";
 import LibraryPicker from "./LibraryPicker";
 
-type View = { kind: "sources" } | { kind: "browse"; folderId: number };
+type View = { kind: "sources" } | { kind: "search" } | { kind: "browse"; folderId: number; highlight?: number };
 
 export default function App() {
   const [info, setInfo] = useState<AppInfo | null>(null);
@@ -16,6 +17,7 @@ export default function App() {
   const [message, setMessage] = useState<string | null>(null);
   // Bumped whenever the index changes so open views reload.
   const [revision, setRevision] = useState(0);
+  const [query, setQuery] = useState("");
 
   const refresh = useCallback(async () => {
     try {
@@ -24,6 +26,7 @@ export default function App() {
       setSources(s);
       setStatus(st);
       setScanning(i.scanning);
+      if (!i.scanning) setProgress(null);
     } catch (e) {
       setMessage(errorText(e));
     }
@@ -46,8 +49,7 @@ export default function App() {
           setMessage(`Scan finished with ${f.summary.errors} unreadable entries, e.g. ${f.summary.error_samples[0]}`);
       }),
       events.onIndexChanged(() => {
-        setProgress(null);
-        setScanning(false);
+        // Also fired by quiet watcher rescans; `refresh` reads whether a full scan is running.
         setRevision((r) => r + 1);
         refresh();
       }),
@@ -61,6 +63,7 @@ export default function App() {
     try {
       await api.switchLibrary(id);
       setView({ kind: "sources" });
+      setQuery("");
       setRevision((r) => r + 1);
       await refresh();
     } catch (e) {
@@ -78,6 +81,20 @@ export default function App() {
     <div className="app">
       <aside className="side">
         <LibraryPicker info={info} onSwitch={switchLibrary} onChanged={refresh} onError={setMessage} />
+        <input
+          className="search-box"
+          type="search"
+          placeholder="Search names and folders"
+          value={query}
+          onFocus={() => setView({ kind: "search" })}
+          onChange={(e) => {
+            setQuery(e.target.value);
+            setView({ kind: "search" });
+          }}
+          onKeyDown={(e) => {
+            if (e.key === "Escape") setQuery("");
+          }}
+        />
         <nav>
           <button
             className={view.kind === "sources" ? "nav active" : "nav"}
@@ -107,7 +124,14 @@ export default function App() {
       </aside>
 
       <main className="main">
-        {view.kind === "sources" ? (
+        {view.kind === "search" ? (
+          <Search
+            query={query}
+            revision={revision}
+            onShowInFolder={(folderId, fileId) => setView({ kind: "browse", folderId, highlight: fileId })}
+            onError={setMessage}
+          />
+        ) : view.kind === "sources" ? (
           <Sources
             sources={sources}
             scanning={scanning}
@@ -119,6 +143,7 @@ export default function App() {
         ) : (
           <Browse
             folderId={view.folderId}
+            highlight={view.highlight}
             revision={revision}
             onNavigate={(folderId) => setView({ kind: "browse", folderId })}
             onError={setMessage}

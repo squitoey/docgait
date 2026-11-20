@@ -198,7 +198,10 @@ pub fn is_package(path: &Path) -> bool {
 
 /// A walker over `root` with every exclusion applied. Hidden files are *not* skipped wholesale:
 /// dotfiles can matter; the junk ones are in the default rules.
-pub fn walker(root: &Path, opts: &WalkOptions) -> Result<WalkBuilder> {
+///
+/// With `scope`, only that folder (inside `root`) is walked. The walk still starts at `root` and
+/// passes through the folders above `scope`, so their ignore files apply exactly as in a full scan.
+pub fn walker(root: &Path, opts: &WalkOptions, scope: Option<&Path>) -> Result<WalkBuilder> {
     let rules = DefaultRules::new(&opts.includes)?;
     let mut b = WalkBuilder::new(root);
     b.hidden(false)
@@ -224,12 +227,21 @@ pub fn walker(root: &Path, opts: &WalkOptions) -> Result<WalkBuilder> {
         b.overrides(ob.build()?);
     }
     let root = root.to_path_buf();
+    let scope = scope.map(Path::to_path_buf);
     b.filter_entry(move |e| {
-        if e.path() == root {
+        let path = e.path();
+        if path == root {
             return true;
         }
         let is_dir = e.file_type().is_some_and(|t| t.is_dir());
-        !rules.excludes(e.path(), is_dir)
+        if let Some(scope) = &scope {
+            let inside = path.starts_with(scope);
+            let above = is_dir && scope.starts_with(path);
+            if !inside && !above {
+                return false;
+            }
+        }
+        !rules.excludes(path, is_dir)
     });
     Ok(b)
 }

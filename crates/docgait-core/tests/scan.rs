@@ -266,3 +266,47 @@ fn macos_packages_are_single_items() {
     assert_eq!(l.files.len(), 1);
     assert_eq!(l.files[0].kind, "package");
 }
+
+#[test]
+fn folder_rescan_touches_only_that_folder() {
+    let (_d, tree, lib) = setup();
+    let t = tree.path();
+    write(t, ".gitignore", "*.log\n");
+    write(t, "a/one.txt", "1");
+    write(t, "a/deep/two.txt", "2");
+    write(t, "b/three.txt", "3");
+    let s = lib.add_source(t, Role::Import, None).unwrap();
+    scan_it(&lib, s.id);
+
+    // Changes in both folders, but only "a" is rescanned.
+    write(t, "a/new.txt", "new");
+    write(t, "a/noise.log", "ignored by the root .gitignore");
+    fs::remove_dir_all(t.join("a/deep")).unwrap();
+    write(t, "b/four.txt", "4");
+    fs::remove_file(t.join("b/three.txt")).unwrap();
+    let sum = scan::scan_folder(&lib, s.id, "a", &|_| {}, &AtomicBool::new(false)).unwrap();
+    assert_eq!(sum.gone, 1);
+
+    let got = all_files(&lib, s.id);
+    let want: BTreeSet<String> = [".gitignore", "a/one.txt", "a/new.txt", "b/three.txt"]
+        .iter()
+        .map(|s| s.to_string())
+        .collect();
+    assert_eq!(got, want);
+    let root = lib.source(s.id).unwrap().root_folder_id.unwrap();
+    let a = lib
+        .list(root, SortBy::Name, None, 10)
+        .unwrap()
+        .folders
+        .into_iter()
+        .find(|f| f.name == "a")
+        .unwrap();
+    assert_eq!((a.file_count, a.folder_count), (2, 0));
+
+    // A folder that disappeared entirely is dropped when rescanned.
+    fs::remove_dir_all(t.join("b")).unwrap();
+    scan::scan_folder(&lib, s.id, "b", &|_| {}, &AtomicBool::new(false)).unwrap();
+    assert!(!all_files(&lib, s.id).iter().any(|f| f.starts_with("b/")));
+    let root_listing = lib.list(root, SortBy::Name, None, 10).unwrap();
+    assert_eq!(root_listing.folder.folder_count, 1);
+}

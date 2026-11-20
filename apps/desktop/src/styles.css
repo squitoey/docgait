@@ -398,3 +398,26 @@ tr.offline td {
   margin: 0 6px;
   color: var(--muted);
 }
+
+/* Search */
+.search-box {
+  width: calc(100% - 8px);
+  margin: 0 4px 10px;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 5px 8px;
+}
+.note {
+  color: var(--warn);
+  font-size: 12px;
+}
+table.list td.path {
+  white-space: nowrap;
+  max-width: 320px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+table.help td {
+  white-space: nowrap;
+}

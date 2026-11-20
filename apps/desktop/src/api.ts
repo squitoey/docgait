@@ -81,6 +81,18 @@ export interface Status {
   missing: number;
 }
 
+export interface SearchHit extends FileEntry {
+  source_id: number;
+  folder_path: string;
+  source_root: string;
+}
+
+export interface SearchResults {
+  hits: SearchHit[];
+  more: boolean;
+  unsupported: string[];
+}
+
 export interface ScanProgress {
   library_id: number;
   source_id: number;
@@ -123,6 +135,7 @@ export const api = {
   cancelScan: () => invoke<void>("cancel_scan"),
   list: (folderId: number, sort: SortBy, after?: Cursor | null, limit?: number) =>
     invoke<Listing>("list", { folderId, sort, after: after ?? null, limit }),
+  search: (query: string, limit?: number) => invoke<SearchResults>("search", { query, limit }),
   status: () => invoke<Status>("status"),
   openFile: (id: number) => invoke<void>("open_file", { id }),
   reveal: (id: number, folder = false) => invoke<void>("reveal", { id, folder }),

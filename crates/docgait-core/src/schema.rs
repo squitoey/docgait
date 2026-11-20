@@ -97,4 +97,26 @@ pub const LIBRARY: &[&str] = &[
        key   TEXT PRIMARY KEY,
        value TEXT NOT NULL
      );",
+    // 2: filename/path search. Trigram tokens give substring matching ("1234" finds
+    // "IMG_1234.jpg"). Contentless: only ids come back; rows are read from `file`.
+    // Kept in step with `file` by triggers. Renaming a folder must re-index its files.
+    "CREATE VIRTUAL TABLE file_fts USING fts5(
+       name, path,
+       tokenize = 'trigram remove_diacritics 1',
+       content = '', contentless_delete = 1
+     );
+     CREATE TRIGGER file_fts_insert AFTER INSERT ON file BEGIN
+       INSERT INTO file_fts (rowid, name, path)
+       VALUES (new.id, new.name, (SELECT rel_path FROM folder WHERE id = new.folder_id));
+     END;
+     CREATE TRIGGER file_fts_delete AFTER DELETE ON file BEGIN
+       DELETE FROM file_fts WHERE rowid = old.id;
+     END;
+     CREATE TRIGGER file_fts_update AFTER UPDATE OF name, folder_id ON file BEGIN
+       DELETE FROM file_fts WHERE rowid = old.id;
+       INSERT INTO file_fts (rowid, name, path)
+       VALUES (new.id, new.name, (SELECT rel_path FROM folder WHERE id = new.folder_id));
+     END;
+     INSERT INTO file_fts (rowid, name, path)
+       SELECT f.id, f.name, d.rel_path FROM file f JOIN folder d ON d.id = f.folder_id;",
 ];

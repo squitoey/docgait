@@ -526,7 +526,7 @@ fn row_to_folder(r: &rusqlite::Row) -> rusqlite::Result<Folder> {
     })
 }
 
-fn row_to_file(r: &rusqlite::Row) -> rusqlite::Result<FileEntry> {
+pub(crate) fn row_to_file(r: &rusqlite::Row) -> rusqlite::Result<FileEntry> {
     Ok(FileEntry {
         id: r.get(0)?,
         folder_id: r.get(1)?,

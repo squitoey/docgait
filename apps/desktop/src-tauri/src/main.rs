@@ -1,18 +1,19 @@
 // Desktop shell: translates UI calls into docgait-core calls. No logic of its own.
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, RwLock};
 use std::time::{Duration, Instant};
 
 use crossbeam_channel::{unbounded, Receiver, Sender};
+use docgait_core::watch::{self, SourceWatcher};
 use docgait_core::{
     scan, App, Cursor, IndexLevel, Library, LibraryInfo, Listing, Role, ScanProgress, ScanSummary,
-    SortBy, Source, Status,
+    SearchResults, SortBy, Source, Status,
 };
 use serde::Serialize;
-use tauri::{AppHandle, Emitter, State};
+use tauri::{AppHandle, Emitter, Manager, State};
 
 const LAST_LIBRARY: &str = "last_library_id";
 
@@ -26,6 +27,8 @@ fn err<E: std::fmt::Display>(e: E) -> String {
 struct ScanRequest {
     lib: Arc<Library>,
     source_id: Option<i64>,
+    /// A folder inside the source (from the file watcher): a quick, quiet rescan of just that.
+    scope: Option<String>,
 }
 
 struct AppState {
@@ -34,6 +37,7 @@ struct AppState {
     scan_tx: Sender<ScanRequest>,
     scanning: Arc<AtomicBool>,
     cancel: Arc<AtomicBool>,
+    watcher: Mutex<Option<SourceWatcher>>,
 }
 
 impl AppState {
@@ -42,6 +46,52 @@ impl AppState {
             .read()
             .unwrap_or_else(|e| e.into_inner())
             .clone()
+    }
+
+    /// (Re)starts watching the current library's online sources. Changes become quiet folder
+    /// rescans on the scan worker.
+    fn restart_watcher(&self) {
+        let mut slot = self.watcher.lock().unwrap_or_else(|e| e.into_inner());
+        *slot = None; // stop the old watcher first
+        let lib = self.lib();
+        let sources: Vec<(i64, PathBuf)> = lib
+            .sources()
+            .unwrap_or_default()
+            .into_iter()
+            .filter(|s| s.online)
+            .map(|s| (s.id, PathBuf::from(s.root)))
+            .collect();
+        if sources.is_empty() {
+            return;
+        }
+        let tx = self.scan_tx.clone();
+        let result = watch::watch(sources, move |changes| {
+            for c in changes {
+                let _ = tx.send(ScanRequest {
+                    lib: lib.clone(),
+                    source_id: Some(c.source_id),
+                    scope: Some(c.rel),
+                });
+            }
+        });
+        match result {
+            Ok((w, problems)) => {
+                for p in problems {
+                    eprintln!("not watching {p}");
+                }
+                *slot = Some(w);
+            }
+            Err(e) => eprintln!("file watching is off: {e:#}"),
+        }
+    }
+
+    /// Full rescan of every source in the current library.
+    fn rescan_all(&self) {
+        let _ = self.scan_tx.send(ScanRequest {
+            lib: self.lib(),
+            source_id: None,
+            scope: None,
+        });
     }
 }
 
@@ -108,6 +158,8 @@ fn switch_library(state: State<AppState>, id: i64) -> CmdResult<LibraryInfo> {
         .app
         .set_setting(LAST_LIBRARY, &id.to_string())
         .map_err(err)?;
+    state.restart_watcher();
+    state.rescan_all();
     Ok(info)
 }
 
@@ -134,7 +186,9 @@ fn add_source(
     let _ = state.scan_tx.send(ScanRequest {
         lib,
         source_id: Some(source.id),
+        scope: None,
     });
+    state.restart_watcher();
     Ok(source)
 }
 
@@ -143,7 +197,9 @@ fn remove_source(state: State<AppState>, id: i64) -> CmdResult<()> {
     if state.scanning.load(Ordering::Relaxed) {
         return Err("Wait for the scan to finish, or stop it, first.".into());
     }
-    state.lib().remove_source(id).map_err(err)
+    state.lib().remove_source(id).map_err(err)?;
+    state.restart_watcher();
+    Ok(())
 }
 
 #[tauri::command(async)]
@@ -170,6 +226,7 @@ fn scan(state: State<AppState>, source_id: Option<i64>) -> CmdResult<()> {
         .send(ScanRequest {
             lib: state.lib(),
             source_id,
+            scope: None,
         })
         .map_err(err)
 }
@@ -195,6 +252,15 @@ fn list(
             after.as_ref(),
             limit.unwrap_or(500),
         )
+        .map_err(err)
+}
+
+/// Searches names and paths in the current library.
+#[tauri::command(async)]
+fn search(state: State<AppState>, query: String, limit: Option<usize>) -> CmdResult<SearchResults> {
+    state
+        .lib()
+        .search(&query, limit.unwrap_or(200))
         .map_err(err)
 }
 
@@ -258,9 +324,18 @@ fn scan_worker(
     cancel: Arc<AtomicBool>,
 ) {
     for req in rx {
+        let library_id = req.lib.info.id;
+        if let (Some(id), Some(rel)) = (req.source_id, req.scope.as_deref()) {
+            // Watcher-driven: small, quiet, no progress. A failure (e.g. the source was just
+            // removed) is not worth bothering anyone about; the next full scan settles it.
+            let never = AtomicBool::new(false);
+            if scan::scan_folder(&req.lib, id, rel, &|_| {}, &never).is_ok() {
+                let _ = handle.emit("index-changed", ChangedEvent { library_id });
+            }
+            continue;
+        }
         scanning.store(true, Ordering::SeqCst);
         cancel.store(false, Ordering::SeqCst);
-        let library_id = req.lib.info.id;
         let last_emit = Mutex::new(Instant::now() - Duration::from_secs(1));
         let h = handle.clone();
         let progress = move |p: &ScanProgress| {
@@ -335,12 +410,17 @@ fn main() {
             scan_tx,
             scanning: scanning.clone(),
             cancel: cancel.clone(),
+            watcher: Mutex::new(None),
         })
         .setup(move |a| {
             let handle = a.handle().clone();
             std::thread::Builder::new()
                 .name("scan-worker".into())
                 .spawn(move || scan_worker(handle, scan_rx, scanning, cancel))?;
+            // Catch up on changes made while the app was closed, then follow live changes.
+            let state = a.state::<AppState>();
+            state.rescan_all();
+            state.restart_watcher();
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -357,6 +437,7 @@ fn main() {
             scan,
             cancel_scan,
             list,
+            search,
             status,
             open_file,
             reveal
