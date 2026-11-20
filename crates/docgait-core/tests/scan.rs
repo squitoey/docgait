@@ -243,6 +243,8 @@ fn libraries_are_separate() {
     scan_it(&p, s.id);
     assert_eq!(p.status().unwrap().files, 1);
     assert_eq!(w.status().unwrap().files, 0);
+    // Close it first: Windows cannot delete an open database file.
+    drop(w);
     app.remove_library(work.id).unwrap();
     assert_eq!(app.libraries().unwrap().len(), 1);
     // The user's files are untouched.

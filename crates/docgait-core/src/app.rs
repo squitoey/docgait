@@ -176,6 +176,7 @@ impl App {
     }
 
     /// Forgets a library: deletes its index and cache, never the user's files.
+    /// Drop any open `Library` for it first: Windows cannot delete an open database file.
     pub fn remove_library(&self, id: i64) -> Result<()> {
         self.conn()
             .execute("DELETE FROM library WHERE id = ?1", [id])?;
