@@ -3,6 +3,7 @@
 
 pub mod app;
 pub mod cleanup;
+pub mod conflicts;
 pub mod db;
 pub mod exclude;
 pub mod excluded;
@@ -20,6 +21,7 @@ pub mod watch;
 
 pub use app::{App, LibraryInfo};
 pub use cleanup::{CleanupResult, Coverage, Match};
+pub use conflicts::{ConflictVariant, ConflictView, MergeStart, Resolution};
 pub use excluded::{ExcludedEntry, ExcludedSummary};
 pub use import::{
     BatchInfo, ImportItem, ImportPlan, ImportProgress, ImportResult, Layout, UndoResult,

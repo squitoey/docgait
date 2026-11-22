@@ -542,3 +542,100 @@ tr.tools-row td {
   padding-left: 18px;
   margin: 6px 0;
 }
+
+/* Conflicts */
+.badge {
+  background: var(--warn);
+  color: var(--panel);
+  border-radius: 9px;
+  font-size: 11px;
+  padding: 0 6px;
+  font-weight: 600;
+}
+.tag.warn {
+  border-color: var(--warn);
+  color: var(--warn);
+}
+.conflicts-page {
+  display: grid;
+  grid-template-columns: 1fr 380px;
+  height: 100%;
+  overflow: hidden;
+}
+.details.wide .variant {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 8px 10px;
+  margin-bottom: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.details.wide .variant.current {
+  border-color: var(--accent);
+}
+.details.wide .variant .grow {
+  flex: 1;
+}
+.merge {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  padding: 16px 20px;
+  overflow: hidden;
+}
+.merge .blocks {
+  max-height: 140px;
+  overflow-y: auto;
+  margin-bottom: 8px;
+}
+.merge .block {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  padding: 2px 0;
+}
+.merge .preview {
+  max-width: 220px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  background: var(--hover);
+  padding: 0 4px;
+  border-radius: 4px;
+}
+.merge .panes {
+  display: grid;
+  grid-template-columns: 1fr 1.2fr 1fr;
+  gap: 8px;
+  flex: 1;
+  min-height: 0;
+}
+.merge .pane {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--panel);
+  padding: 6px;
+}
+.merge .pane.result {
+  border-color: var(--accent);
+}
+.merge pre,
+.merge textarea {
+  flex: 1;
+  margin: 0;
+  overflow: auto;
+  font-family: ui-monospace, Menlo, monospace;
+  font-size: 12px;
+  white-space: pre;
+  user-select: text;
+}
+.merge textarea {
+  border: none;
+  resize: none;
+  background: transparent;
+  outline: none;
+}

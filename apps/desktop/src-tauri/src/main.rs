@@ -9,9 +9,10 @@ use std::time::{Duration, Instant};
 use crossbeam_channel::{unbounded, Receiver, Sender};
 use docgait_core::watch::{self, SourceWatcher};
 use docgait_core::{
-    scan, App, BatchInfo, CleanupResult, Coverage, Cursor, ExcludedSummary, ImportItem, ImportPlan,
-    ImportProgress, ImportResult, IndexLevel, Layout, Library, LibraryInfo, Listing, Match, Role,
-    ScanProgress, ScanSummary, SearchResults, SortBy, Source, Status, UndoResult,
+    scan, App, BatchInfo, CleanupResult, ConflictView, Coverage, Cursor, ExcludedSummary,
+    ImportItem, ImportPlan, ImportProgress, ImportResult, IndexLevel, Layout, Library, LibraryInfo,
+    Listing, Match, MergeStart, Resolution, Role, ScanProgress, ScanSummary, SearchResults, SortBy,
+    Source, Status, UndoResult,
 };
 use serde::Serialize;
 use tauri::{AppHandle, Emitter, Manager, State};
@@ -446,6 +447,83 @@ fn include_anyway(
 }
 
 #[tauri::command(async)]
+fn conflicts(
+    state: State<AppState>,
+    include_resolved: Option<bool>,
+) -> CmdResult<Vec<ConflictView>> {
+    state
+        .lib()
+        .conflicts(include_resolved.unwrap_or(false))
+        .map_err(err)
+}
+
+#[tauri::command(async)]
+fn conflict_count(state: State<AppState>) -> CmdResult<i64> {
+    state.lib().open_conflict_count().map_err(err)
+}
+
+#[tauri::command(async)]
+fn resolve_conflict(
+    handle: AppHandle,
+    state: State<AppState>,
+    id: i64,
+    resolution: Resolution,
+) -> CmdResult<i64> {
+    let lib = state.lib();
+    let res = lib.resolve_conflict(id, &resolution).map_err(err);
+    let _ = handle.emit(
+        "index-changed",
+        ChangedEvent {
+            library_id: lib.info.id,
+        },
+    );
+    res
+}
+
+#[tauri::command(async)]
+fn accept_suggestions(handle: AppHandle, state: State<AppState>) -> CmdResult<(i64, usize)> {
+    let lib = state.lib();
+    let res = lib.accept_suggestions().map_err(err);
+    let _ = handle.emit(
+        "index-changed",
+        ChangedEvent {
+            library_id: lib.info.id,
+        },
+    );
+    res
+}
+
+#[tauri::command(async)]
+fn merge_start(state: State<AppState>, id: i64, variant: String) -> CmdResult<MergeStart> {
+    state.lib().merge_start(id, &variant).map_err(err)
+}
+
+/// Opens a conflict variant in its default app. Only paths that belong to a conflict.
+#[tauri::command(async)]
+fn open_conflict_file(state: State<AppState>, path: String) -> CmdResult<()> {
+    let known = state
+        .lib()
+        .conflicts(true)
+        .map_err(err)?
+        .iter()
+        .any(|c| c.variants.iter().any(|v| v.path == path));
+    if !known {
+        return Err("not a conflict file".into());
+    }
+    let mut cmd = if cfg!(target_os = "macos") {
+        std::process::Command::new("/usr/bin/open")
+    } else if cfg!(windows) {
+        let mut c = std::process::Command::new("cmd");
+        c.args(["/C", "start", ""]);
+        c
+    } else {
+        std::process::Command::new("xdg-open")
+    };
+    cmd.arg(&path).spawn().map_err(err)?;
+    Ok(())
+}
+
+#[tauri::command(async)]
 fn history(state: State<AppState>) -> CmdResult<Vec<BatchInfo>> {
     state.lib().history(50).map_err(err)
 }
@@ -655,6 +733,12 @@ fn main() {
             import_items,
             history,
             undo_batch,
+            conflicts,
+            conflict_count,
+            resolve_conflict,
+            accept_suggestions,
+            merge_start,
+            open_conflict_file,
             check_coverage,
             coverage_files,
             cleanup,

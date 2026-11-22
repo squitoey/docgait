@@ -201,6 +201,47 @@ export interface UndoResult {
   errors: string[];
 }
 
+export interface ConflictVariant {
+  path: string;
+  origin: string;
+  origin_path: string;
+  size: number;
+  mtime_ns: number;
+  healthy: boolean;
+  is_suggested: boolean;
+  is_current: boolean;
+  exists: boolean;
+  text: boolean;
+}
+
+export interface ConflictView {
+  id: number;
+  path: string;
+  name: string;
+  folder: string;
+  state: "needs_review" | "suggested" | "resolved";
+  reason: string;
+  created_at: number;
+  variants: ConflictVariant[];
+}
+
+export type Resolution =
+  | { type: "keep-current" }
+  | { type: "keep-variant"; path: string }
+  | { type: "keep-all"; names: [string, string][] }
+  | { type: "merge"; text: string }
+  | { type: "mark-resolved" };
+
+export interface MergeStart {
+  left_label: string;
+  right_label: string;
+  left: string;
+  right: string;
+  base_label: string | null;
+  result: string;
+  clean: boolean;
+}
+
 export interface ScanProgress {
   library_id: number;
   source_id: number;
@@ -258,6 +299,12 @@ export const api = {
   excluded: (sourceId: number) => invoke<ExcludedSummary>("excluded", { sourceId }),
   includeAnyway: (sourceId: number, rel: string, reason: ExcludedReason) =>
     invoke<void>("include_anyway", { sourceId, rel, reason }),
+  conflicts: (includeResolved = false) => invoke<ConflictView[]>("conflicts", { includeResolved }),
+  conflictCount: () => invoke<number>("conflict_count"),
+  resolveConflict: (id: number, resolution: Resolution) => invoke<number>("resolve_conflict", { id, resolution }),
+  acceptSuggestions: () => invoke<[number, number]>("accept_suggestions"),
+  mergeStart: (id: number, variant: string) => invoke<MergeStart>("merge_start", { id, variant }),
+  openConflictFile: (path: string) => invoke<void>("open_conflict_file", { path }),
   history: () => invoke<BatchInfo[]>("history"),
   undoBatch: (batchId: number) => invoke<UndoResult>("undo_batch", { batchId }),
   search: (query: string, limit?: number) => invoke<SearchResults>("search", { query, limit }),

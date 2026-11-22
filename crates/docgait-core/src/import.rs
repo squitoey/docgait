@@ -904,7 +904,7 @@ impl Library {
                 }
                 let to = PathBuf::from(to.context("journal entry without a destination")?);
                 match op.as_str() {
-                    "copy" => {
+                    "copy" | "create" => {
                         if !to.exists() {
                             return Ok(()); // already gone
                         }
@@ -965,6 +965,13 @@ impl Library {
             conn.execute(
                 "UPDATE batch SET state = ?2 WHERE id = ?1",
                 params![batch_id, state],
+            )?;
+            // Conflicts this batch resolved are open again.
+            conn.execute(
+                "UPDATE conflict SET state = CASE reason WHEN 'clear_newest' THEN 'suggested' ELSE 'needs_review' END,
+                        resolved_at = NULL, resolution = NULL, resolved_batch_id = NULL
+                  WHERE resolved_batch_id = ?1",
+                [batch_id],
             )?;
             if let Some((run_id, _, _)) = &run {
                 conn.execute(

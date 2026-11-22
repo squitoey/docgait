@@ -217,4 +217,6 @@ pub const LIBRARY: &[&str] = &[
        bytes_in_library     INTEGER NOT NULL,
        bytes_not_in_library INTEGER NOT NULL
      );",
+    // 5: which batch resolved a conflict, so undoing it reopens the conflict.
+    "ALTER TABLE conflict ADD COLUMN resolved_batch_id INTEGER;",
 ];
