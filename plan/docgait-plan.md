@@ -4,6 +4,8 @@ A local-first desktop app for managing all kinds of files: merge scattered copie
 organised library, remove duplicates, browse, search (including document contents), OCR scans,
 convert formats, and later run an AI agent over documents.
 
+**Progress** (2026-11-21): M0, M1 and M2 built (M2 in four PRs: import, clean-up, conflicts, organise).
+
 **Current priority**: merge several copies of the same data into one library and remove the
 duplicates (§12, milestones M1–M3). Search and the other features are welcome outcomes but not
 critical yet.

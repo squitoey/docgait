@@ -875,6 +875,15 @@ impl Library {
     /// Step 3: reverse a batch. Copies go to the OS trash (after checking they are still the
     /// file we made), renames are reversed, folders the batch created are removed when empty.
     pub fn undo_batch(&self, batch_id: i64) -> Result<UndoResult> {
+        let state: Option<String> = self
+            .reader()?
+            .query_row("SELECT state FROM batch WHERE id = ?1", [batch_id], |r| r.get(0))
+            .optional()?;
+        match state.as_deref() {
+            None => bail!("no batch {batch_id} (see history)"),
+            Some("undone") => bail!("batch {batch_id} was already undone"),
+            _ => {}
+        }
         let entries: Vec<JournalRow> = {
             let conn = self.reader()?;
             let mut stmt = conn.prepare(
@@ -920,7 +929,37 @@ impl Library {
                     }
                     "rename" => {
                         let from = PathBuf::from(from.context("rename without an origin")?);
-                        fsops::rename_no_replace(&to, &from)
+                        let case_only = from.to_string_lossy().to_lowercase()
+                            == to.to_string_lossy().to_lowercase();
+                        if case_only {
+                            std::fs::rename(&to, &from)?;
+                        } else if to.is_dir() {
+                            if from.exists() {
+                                bail!("{} exists again; not moved back over it", from.display());
+                            }
+                            std::fs::rename(&to, &from)?;
+                        } else {
+                            fsops::move_file(&to, &from)?;
+                        }
+                        // Keep ids (and tags) by updating the index in place.
+                        let _ = self.reindex_move(&to, &from);
+                        Ok(())
+                    }
+                    "edit" => {
+                        // from = backup of the original text, to = the edited note.
+                        let backup = PathBuf::from(from.context("edit without a backup")?);
+                        let now = std::fs::read(&to)?;
+                        if h.as_deref() != Some(blake3::hash(&now).as_bytes().as_slice()) {
+                            bail!(
+                                "{} changed since it was updated; not restored",
+                                to.display()
+                            );
+                        }
+                        let original = std::fs::read(&backup)?;
+                        let tmp = to.with_extension("docgait-restore-tmp");
+                        std::fs::write(&tmp, original)?;
+                        std::fs::rename(&tmp, &to)?;
+                        Ok(())
                     }
                     "mkdir" => {
                         // Only if empty; anything put there since stays.
@@ -1376,7 +1415,7 @@ fn unique_conflict_name(
 }
 
 /// YYYY-MM-DD (UTC) for nanoseconds since the epoch.
-fn ymd(ns: i64) -> String {
+pub(crate) fn ymd(ns: i64) -> String {
     let days = ns.div_euclid(86_400 * 1_000_000_000);
     // Howard Hinnant's civil_from_days.
     let z = days + 719_468;
@@ -1392,7 +1431,7 @@ fn ymd(ns: i64) -> String {
     format!("{y:04}-{m:02}-{d:02}")
 }
 
-fn normalize_rel(rel: &str) -> String {
+pub(crate) fn normalize_rel(rel: &str) -> String {
     rel.split(['/', '\\'])
         .filter(|p| !p.is_empty() && *p != ".")
         .collect::<Vec<_>>()

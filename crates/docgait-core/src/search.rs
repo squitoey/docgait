@@ -32,6 +32,7 @@ pub struct Query {
     pub kinds: Vec<String>,
     pub exts: Vec<String>,
     pub in_folders: Vec<String>,
+    pub tags: Vec<String>,
     pub modified_after: Option<i64>,
     pub modified_before: Option<i64>,
     pub created_after: Option<i64>,
@@ -48,6 +49,7 @@ impl Query {
             && self.kinds.is_empty()
             && self.exts.is_empty()
             && self.in_folders.is_empty()
+            && self.tags.is_empty()
             && self.modified_after.is_none()
             && self.modified_before.is_none()
             && self.created_after.is_none()
@@ -96,7 +98,7 @@ pub fn parse(input: &str) -> Query {
 }
 
 fn is_known_later(key: &str) -> bool {
-    matches!(key, "tag" | "has" | "person")
+    matches!(key, "has" | "person")
 }
 
 fn apply_filter(q: &mut Query, key: &str, value: &str) -> bool {
@@ -111,6 +113,7 @@ fn apply_filter(q: &mut Query, key: &str, value: &str) -> bool {
         }
         "kind" => q.kinds.push(v),
         "in" => q.in_folders.push(value.to_string()),
+        "tag" => q.tags.push(value.to_string()),
         "after" | "modified-after" => match parse_date(&v) {
             Some((start, _)) => q.modified_after = Some(start),
             None => q.unsupported.push(format!(
@@ -391,6 +394,13 @@ impl Library {
             sql.push_str(&format!(" AND f.ext IN ({})", placeholders(q.exts.len())));
             args.extend(q.exts.iter().map(|e| Value::Text(e.clone())));
         }
+        for tag in &q.tags {
+            sql.push_str(
+                " AND f.id IN (SELECT ft.file_id FROM file_tag ft JOIN tag t ON t.id = ft.tag_id
+                               WHERE t.name = ? COLLATE NOCASE)",
+            );
+            args.push(Value::Text(tag.clone()));
+        }
         for folder in &q.in_folders {
             sql.push_str(" AND (d.rel_path LIKE ? ESCAPE '\\' OR s.root LIKE ? ESCAPE '\\')");
             let p = like_pattern(folder);
@@ -478,9 +488,10 @@ mod tests {
 
     #[test]
     fn later_filters_are_reported() {
-        let q = parse("tag:receipts person:jane has:ocr after:yesterday");
-        assert_eq!(q.unsupported.len(), 4);
+        let q = parse("person:jane has:ocr after:yesterday");
+        assert_eq!(q.unsupported.len(), 3);
         assert!(q.is_empty());
+        assert_eq!(parse("tag:receipts").tags, vec!["receipts"]);
     }
 
     #[test]

@@ -639,3 +639,40 @@ tr.tools-row td {
   background: transparent;
   outline: none;
 }
+
+/* Organise */
+.toolbar {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  padding: 6px 8px;
+  margin-bottom: 8px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--panel);
+}
+tr.drop td,
+.crumbs .drop {
+  background: var(--selected);
+  outline: 2px dashed var(--accent);
+  outline-offset: -2px;
+}
+table.files:focus {
+  outline: none;
+}
+.tags {
+  margin-top: 16px;
+}
+.tags input {
+  width: 100%;
+  margin-top: 6px;
+}
+.tag-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: 0 4px 0 8px;
+  font-size: 12px;
+}

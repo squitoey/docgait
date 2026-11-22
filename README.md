@@ -3,7 +3,7 @@
 A personal, local-first document manager: merge scattered copies of your files into one organised
 library, remove duplicates, browse and search everything. Nothing leaves your machine.
 
-Status: **M2, slice 3**. Libraries, sources, a names-only background scan with sensible
+Status: **M2 complete** (slice 4: organise). Libraries, sources, a names-only background scan with sensible
 excludes, live updates, filename/path search, and **import into the library**: merge several
 copies of your data into one folder without duplicates, with a preview first and undo after,
 then **clean up** the copies once everything is verified to be in the library. The full plan is in
@@ -64,7 +64,12 @@ docgait include-anyway ~/OldLaptop/secret.env
 docgait conflicts                           # open conflicts and their versions
 docgait resolve 4 keep <path>               # keep one version (keep-current, keep, mark)
 docgait accept-suggestions --yes            # keep the suggested version everywhere it is clear
-docgait history                             # imports, clean-ups and resolutions so far
+docgait mv ~/Lib/Inbox/W2.pdf ~/Lib/Taxes --yes   # move (dry run without --yes)
+docgait rename ~/Lib/Taxes "Tax Returns"
+docgait mkdir ~/Lib/Receipts
+docgait organise ~/Lib/Inbox "{kind}/{year}" --yes  # rule-based organise (preview without --yes)
+docgait tag add receipts ~/Lib/Inbox/*.pdf        # then: docgait search tag:receipts
+docgait history                             # imports, clean-ups, resolutions, organise steps
 docgait undo 1 --yes                        # undo an import: its copies go to the trash
 docgait libraries create Work               # libraries are fully separate
 docgait -L Work scan ~/WorkDrive
@@ -103,6 +108,23 @@ with *use left / use right / use both* per block. With three or more versions, t
 as the common base for a three-way merge, so changes that don't overlap merge on their own.
 Conflict files found in the library that docgait didn't create (e.g. after a rebuild) are picked
 up by their `.conflict-` marker. Every resolution can be undone.
+
+### Organise
+
+In Browse: **New folder**, **Rename** (F2), **Move to…**, **Move to trash**, and drag files or
+folders onto a folder row or the path at the top. ⌘/Ctrl-click and Shift-click select several.
+**Organise…** moves every file under a folder into a structure built from a template
+(`{kind}/{year}`, `{year}/{month}`, `{ext}`, `{tag}`, …) after a preview. Names are made unique
+(`W2 (2).pdf`) instead of overwriting. Moves inside a source update the index in place, so a file
+keeps its tags. Everything is one undoable step.
+
+**Tags**: add them in the details panel (several files at once), search with `tag:receipts`, use
+`{tag}` in organise templates.
+
+**Obsidian vaults** (folders with `.obsidian/`): moving or renaming a file inside a vault updates
+the links to it in the vault's notes (`[[Note]]`, `[[Note#heading|alias]]`, `![[embed]]`, and
+relative markdown links), and a moved note's own relative links. Moving something out of a vault,
+or trashing it, warns first. Undo restores the notes' text.
 
 ### Clean up afterwards
 
