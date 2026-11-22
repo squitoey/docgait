@@ -183,7 +183,12 @@ fn organise_by_template() {
     let ids = lib.file_ids_under(inbox).unwrap();
     let top = folder(&lib, &root, "");
     let preview = lib.preview_template(&ids, top, "{kind}/{ext}").unwrap();
-    let tos: Vec<String> = preview.steps.iter().filter_map(|s| s.to.clone()).collect();
+    // Compare with "/" on every OS (Windows paths use "\\").
+    let tos: Vec<String> = preview
+        .steps
+        .iter()
+        .filter_map(|s| s.to.as_ref().map(|t| t.replace('\\', "/")))
+        .collect();
     assert!(
         tos.iter().any(|t| t.ends_with("document/pdf/report.pdf")),
         "{tos:?}"

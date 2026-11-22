@@ -877,7 +877,9 @@ impl Library {
     pub fn undo_batch(&self, batch_id: i64) -> Result<UndoResult> {
         let state: Option<String> = self
             .reader()?
-            .query_row("SELECT state FROM batch WHERE id = ?1", [batch_id], |r| r.get(0))
+            .query_row("SELECT state FROM batch WHERE id = ?1", [batch_id], |r| {
+                r.get(0)
+            })
             .optional()?;
         match state.as_deref() {
             None => bail!("no batch {batch_id} (see history)"),
