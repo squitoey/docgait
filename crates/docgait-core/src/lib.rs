@@ -5,14 +5,21 @@ pub mod app;
 pub mod db;
 pub mod exclude;
 pub mod fsmeta;
+pub mod fsops;
+pub mod hash;
+pub mod import;
 pub mod kind;
 pub mod library;
 pub mod scan;
 pub mod schema;
 pub mod search;
+mod trash;
 pub mod watch;
 
 pub use app::{App, LibraryInfo};
+pub use import::{
+    BatchInfo, ImportItem, ImportPlan, ImportProgress, ImportResult, Layout, UndoResult,
+};
 pub use library::{
     Cursor, FileEntry, Folder, IndexLevel, Library, Listing, Role, SortBy, Source, Status,
 };

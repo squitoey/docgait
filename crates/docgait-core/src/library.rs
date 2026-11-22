@@ -220,6 +220,9 @@ impl Library {
                 );
             }
         }
+        if role == Role::Library && self.sources()?.iter().any(|s| s.role == Role::Library) {
+            bail!("this library already has a library folder");
+        }
         let level = level.unwrap_or(role.default_level());
         {
             let conn = self.writer();

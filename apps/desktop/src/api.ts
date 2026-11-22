@@ -93,6 +93,71 @@ export interface SearchResults {
   unsupported: string[];
 }
 
+export type Layout = "merge" | "own-folder";
+
+export interface ImportProgress {
+  phase: "hashing" | "copying" | "finishing";
+  done: number;
+  total: number;
+  bytes_done: number;
+  bytes_total: number;
+}
+
+export interface ImportPlan {
+  run_id: number;
+  state: string;
+  dest_path: string;
+  files: number;
+  to_copy: number;
+  bytes_to_copy: number;
+  skipped_in_library: number;
+  skipped_duplicate: number;
+  conflicts: number;
+  needs_review: number;
+  batch_id: number | null;
+}
+
+export interface ImportItem {
+  id: number;
+  action: "copy" | "rename_existing" | "skip_in_library" | "skip_duplicate";
+  from_path: string;
+  to_path: string | null;
+  size: number;
+  mtime_ns: number;
+  note: string | null;
+  conflict_id: number | null;
+  state: string;
+  error: string | null;
+}
+
+export interface ImportResult {
+  run_id: number;
+  batch_id: number;
+  copied: number;
+  renamed: number;
+  failed: number;
+  bytes: number;
+  errors: string[];
+  cancelled: boolean;
+}
+
+export interface BatchInfo {
+  id: number;
+  kind: string;
+  created_at: number;
+  description: string;
+  state: string;
+  done: number;
+  undone: number;
+}
+
+export interface UndoResult {
+  batch_id: number;
+  undone: number;
+  failed: number;
+  errors: string[];
+}
+
 export interface ScanProgress {
   library_id: number;
   source_id: number;
@@ -135,6 +200,16 @@ export const api = {
   cancelScan: () => invoke<void>("cancel_scan"),
   list: (folderId: number, sort: SortBy, after?: Cursor | null, limit?: number) =>
     invoke<Listing>("list", { folderId, sort, after: after ?? null, limit }),
+  libraryFolder: () => invoke<Source | null>("library_folder"),
+  setLibraryFolder: (path: string) => invoke<Source>("set_library_folder", { path }),
+  planImport: (folderIds: number[], dest: string, layout: Layout) =>
+    invoke<ImportPlan>("plan_import", { folderIds, dest, layout }),
+  executeImport: (runId: number) => invoke<ImportResult>("execute_import", { runId }),
+  cancelImport: () => invoke<void>("cancel_import"),
+  importItems: (runId: number, action: string | null, conflictsOnly: boolean, offset = 0, limit = 200) =>
+    invoke<ImportItem[]>("import_items", { runId, action, conflictsOnly, offset, limit }),
+  history: () => invoke<BatchInfo[]>("history"),
+  undoBatch: (batchId: number) => invoke<UndoResult>("undo_batch", { batchId }),
   search: (query: string, limit?: number) => invoke<SearchResults>("search", { query, limit }),
   status: () => invoke<Status>("status"),
   openFile: (id: number) => invoke<void>("open_file", { id }),
@@ -146,6 +221,8 @@ export const events = {
     listen<ScanProgress>("scan-progress", (e) => cb(e.payload)),
   onScanFinished: (cb: (p: ScanFinished) => void): Promise<UnlistenFn> =>
     listen<ScanFinished>("scan-finished", (e) => cb(e.payload)),
+  onImportProgress: (cb: (p: ImportProgress) => void): Promise<UnlistenFn> =>
+    listen<ImportProgress>("import-progress", (e) => cb(e.payload)),
   onIndexChanged: (cb: (libraryId: number) => void): Promise<UnlistenFn> =>
     listen<{ library_id: number }>("index-changed", (e) => cb(e.payload.library_id)),
 };
