@@ -87,6 +87,30 @@ enum Cmd {
         #[arg(long)]
         list: bool,
     },
+    /// How much of a folder (or whole source) is already in the library.
+    Check {
+        path: PathBuf,
+        /// List the files that are NOT in the library yet.
+        #[arg(long)]
+        missing: bool,
+    },
+    /// Trash files in a folder (or source) that are verified to be in the library. A dry run
+    /// unless --yes is given. Files the library does not have are never touched.
+    Cleanup {
+        path: PathBuf,
+        #[arg(long)]
+        yes: bool,
+    },
+    /// What a source's scan left out, and why.
+    Excluded {
+        /// The source folder.
+        path: PathBuf,
+    },
+    /// Bring back something the scan left out (see `docgait excluded`).
+    IncludeAnyway {
+        /// The excluded file or folder.
+        path: PathBuf,
+    },
     /// Recent imports and other undoable actions.
     History,
     /// Undo an import (or other action) by its batch number from `docgait history`.
@@ -288,6 +312,110 @@ fn run(cli: Cli) -> Result<()> {
             resume,
             list,
         } => import_cmd(&lib, folders, &dest, layout, yes, resume, list),
+        Cmd::Check { path, missing } => {
+            let folder = lib.folder_for_path(&path)?;
+            let cancel = AtomicBool::new(false);
+            let progress = |p: &ImportProgress| {
+                if p.total > 0 {
+                    eprint!("\r{}: {}/{}   ", p.phase, p.done, p.total);
+                }
+            };
+            let c = lib.check_coverage(folder.id, &progress, &cancel)?;
+            eprintln!();
+            let pct = if c.files > 0 {
+                c.in_library * 100 / c.files
+            } else {
+                100
+            };
+            println!(
+                "{pct}% in the library: {} of {} files ({}); {} not yet ({})",
+                c.in_library,
+                c.files,
+                human(c.bytes_in_library),
+                c.not_in_library,
+                human(c.bytes_not_in_library)
+            );
+            if missing {
+                for m in lib.coverage_files(folder.id, false, 100_000, &|_| {}, &cancel)? {
+                    println!("  {}", m.path);
+                }
+            }
+            Ok(())
+        }
+        Cmd::Cleanup { path, yes } => {
+            let folder = lib.folder_for_path(&path)?;
+            let cancel = AtomicBool::new(false);
+            let progress = |p: &ImportProgress| {
+                if p.total > 0 {
+                    eprint!("\r{}: {}/{}   ", p.phase, p.done, p.total);
+                }
+            };
+            if !yes {
+                let c = lib.check_coverage(folder.id, &progress, &cancel)?;
+                eprintln!();
+                println!(
+                    "would trash {} files ({}) that are verified to be in the library; {} files are not and stay. Add --yes to do it.",
+                    c.in_library,
+                    human(c.bytes_in_library),
+                    c.not_in_library
+                );
+                return Ok(());
+            }
+            let r = lib.cleanup(folder.id, &progress, &cancel)?;
+            eprintln!();
+            println!(
+                "trashed {} files ({}), removed {} empty folders, skipped {}. Undo with `docgait undo {}`.",
+                r.trashed,
+                human(r.bytes as i64),
+                r.folders_removed,
+                r.skipped,
+                r.batch_id
+            );
+            for e in r.errors {
+                println!("  {e}");
+            }
+            Ok(())
+        }
+        Cmd::Excluded { path } => {
+            let folder = lib.folder_for_path(&path)?;
+            let ex = lib.excluded(folder.source_id)?;
+            for (reason, n) in &ex.by_reason {
+                println!("{n:>6}  {}", reason_text(reason));
+            }
+            for e in &ex.entries {
+                println!(
+                    "  {}{}  [{}]",
+                    e.rel,
+                    if e.is_dir { "/" } else { "" },
+                    e.reason
+                );
+            }
+            if ex.truncated {
+                println!("  … more");
+            }
+            Ok(())
+        }
+        Cmd::IncludeAnyway { path } => {
+            let abs = std::path::absolute(&path)?;
+            let source = lib
+                .sources()?
+                .into_iter()
+                .find(|s| abs.starts_with(&s.root))
+                .ok_or_else(|| anyhow::anyhow!("{} is not inside a source", path.display()))?;
+            let rel = abs
+                .strip_prefix(&source.root)?
+                .to_string_lossy()
+                .replace('\\', "/");
+            let ex = lib.excluded(source.id)?;
+            let entry = ex.entries.iter().find(|e| e.rel == rel).ok_or_else(|| {
+                anyhow::anyhow!(
+                    "{rel} is not excluded (or is inside an excluded folder: name that folder)"
+                )
+            })?;
+            lib.include_anyway(source.id, &rel, entry.reason)?;
+            println!("{rel} is indexed now");
+            Ok(())
+        }
         Cmd::History => {
             let h = lib.history(30)?;
             if h.is_empty() {
@@ -643,6 +771,16 @@ fn import_cmd(
         println!("  {e}");
     }
     Ok(())
+}
+
+fn reason_text(reason: &str) -> &'static str {
+    match reason {
+        "builtin" => "built-in excludes (SCM folders, dependencies, OS junk)",
+        "cachedir" => "folders tagged with CACHEDIR.TAG",
+        "pattern" => "your exclude patterns",
+        "symlink" => "symlinks (not followed)",
+        _ => "ignore files (.gitignore, .ignore, .rgignore, .docgaitignore)",
+    }
 }
 
 fn fmt_time(secs: i64) -> String {

@@ -3,9 +3,10 @@
 A personal, local-first document manager: merge scattered copies of your files into one organised
 library, remove duplicates, browse and search everything. Nothing leaves your machine.
 
-Status: **M2, slice 1**. Libraries, sources, a names-only background scan with sensible
+Status: **M2, slice 2**. Libraries, sources, a names-only background scan with sensible
 excludes, live updates, filename/path search, and **import into the library**: merge several
-copies of your data into one folder without duplicates, with a preview first and undo after. The full plan is in
+copies of your data into one folder without duplicates, with a preview first and undo after,
+then **clean up** the copies once everything is verified to be in the library. The full plan is in
 [plan/docgait-plan.md](plan/docgait-plan.md).
 
 ## Layout
@@ -56,7 +57,11 @@ docgait status
 docgait library-folder ~/Library-Folder     # this library's folder (where imports go)
 docgait import ~/OldLaptop ~/Backup2019     # preview: what would be copied, skipped, in conflict
 docgait import --resume 1 --yes             # do it (or resume an interrupted import)
-docgait history                             # imports so far
+docgait check ~/OldLaptop --missing         # how much is already in the library; list the rest
+docgait cleanup ~/OldLaptop --yes           # trash files verified to be in the library
+docgait excluded ~/OldLaptop                # what the scan left out, and why
+docgait include-anyway ~/OldLaptop/secret.env
+docgait history                             # imports and clean-ups so far
 docgait undo 1 --yes                        # undo an import: its copies go to the trash
 docgait libraries create Work               # libraries are fully separate
 docgait -L Work scan ~/WorkDrive
@@ -83,6 +88,19 @@ Pick sources (or folders inside them) and merge them into the library folder:
 - Nothing is copied until you confirm. Every copy is verified by hash, written under a temporary
   name first, and journaled. An interrupted import resumes; a whole import can be undone (copies
   go to the trash, renames are reversed). Sources are never changed.
+
+### Clean up afterwards
+
+A separate step, never part of the import. **Check against library** reports how much of a source
+is already in the library (byte-identical, by hash). **Clean up** moves only those files to the
+trash, re-checking each one and its library copy right before, then removes folders it emptied.
+Files the library does not have are never touched. Undo restores everything from the trash.
+
+### What was left out
+
+Each source's **More ▾ → Show what was excluded** lists everything the scan skipped and why
+(built-in excludes, `CACHEDIR.TAG`, your patterns, symlinks, ignore files), with **Index anyway**.
+For files hidden by an ignore file, that adds a `!` line to the source's `.docgaitignore`.
 
 `DOCGAIT_TRASH_DIR=<folder>` replaces the OS trash with a plain folder, for experiments.
 

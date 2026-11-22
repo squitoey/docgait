@@ -1,6 +1,7 @@
-import { useState } from "react";
+import { Fragment, useState } from "react";
 import { open } from "@tauri-apps/plugin-dialog";
 import { api, errorText, humanSize, type IndexLevel, type Role, type Source } from "./api";
+import SourceTools from "./SourceTools";
 
 interface Props {
   sources: Source[];
@@ -25,6 +26,8 @@ const LEVEL_HELP: Record<IndexLevel, string> = {
 
 export default function Sources({ sources, scanning, onChanged, onBrowse, onError }: Props) {
   const [path, setPath] = useState<string | null>(null);
+  const [expanded, setExpanded] = useState<number | null>(null);
+  const hasLibrary = sources.some((s) => s.role === "library");
   const [role, setRole] = useState<Role>("import");
   const [level, setLevel] = useState<IndexLevel>("names");
 
@@ -137,66 +140,87 @@ export default function Sources({ sources, scanning, onChanged, onBrowse, onErro
       <table className="list">
         <tbody>
           {sources.map((s) => (
-            <tr key={s.id} className={s.online ? "" : "offline"}>
-              <td className="grow">
-                <button
-                  className="link strong"
-                  disabled={s.root_folder_id == null}
-                  onClick={() => s.root_folder_id != null && onBrowse(s.root_folder_id)}
-                >
-                  {s.root}
-                </button>
-                <div className="muted small">
-                  {s.role} · {s.index_level === "names" ? "names only" : s.index_level}
-                  {s.removable ? " · removable" : ""}
-                  {s.honor_ignore_files ? "" : " · ignore files off"}
-                  {!s.online ? " · offline" : ""}
-                  {s.last_scan_at
-                    ? ` · scanned ${new Date(s.last_scan_at * 1000).toLocaleString()}`
-                    : " · not scanned yet"}
-                </div>
-              </td>
-              <td className="num">
-                {s.file_count.toLocaleString()} files
-                <div className="muted small">{humanSize(s.total_size)}</div>
-                {s.missing_count > 0 && <div className="muted small">{s.missing_count.toLocaleString()} missing</div>}
-              </td>
-              <td className="actions">
-                <select
-                  value={s.index_level}
-                  onChange={(e) => act(() => api.setSourceLevel(s.id, e.target.value as IndexLevel))()}
-                  aria-label="Index level"
-                >
-                  <option value="names">Names only</option>
-                  <option value="full">Full</option>
-                  <option value="agent" disabled>
-                    Agent
-                  </option>
-                </select>
-                <label className="check">
-                  <input
-                    type="checkbox"
-                    checked={s.removable}
-                    onChange={(e) => act(() => api.setSourceRemovable(s.id, e.target.checked))()}
-                  />
-                  Removable
-                </label>
-                <label className="check" title=".gitignore, .ignore, .rgignore, .docgaitignore">
-                  <input
-                    type="checkbox"
-                    checked={s.honor_ignore_files}
-                    onChange={(e) => act(() => api.setHonorIgnoreFiles(s.id, e.target.checked))()}
-                  />
-                  Ignore files
-                </label>
-                <button disabled={scanning || !s.online} onClick={act(() => api.scan(s.id))}>
-                  Scan
-                </button>
-                <button disabled={scanning} onClick={act(() => api.removeSource(s.id))} title="Files are not touched">
-                  Remove
-                </button>
-              </td>
-            </tr>
+            <Fragment key={s.id}>
+              <tr className={s.online ? "" : "offline"}>
+                <td className="grow">
+                  <button
+                    className="link strong"
+                    disabled={s.root_folder_id == null}
+                    onClick={() => s.root_folder_id != null && onBrowse(s.root_folder_id)}
+                  >
+                    {s.root}
+                  </button>
+                  <div className="muted small">
+                    {s.role} · {s.index_level === "names" ? "names only" : s.index_level}
+                    {s.removable ? " · removable" : ""}
+                    {s.honor_ignore_files ? "" : " · ignore files off"}
+                    {!s.online ? " · offline" : ""}
+                    {s.last_scan_at
+                      ? ` · scanned ${new Date(s.last_scan_at * 1000).toLocaleString()}`
+                      : " · not scanned yet"}
+                  </div>
+                </td>
+                <td className="num">
+                  {s.file_count.toLocaleString()} files
+                  <div className="muted small">{humanSize(s.total_size)}</div>
+                  {s.missing_count > 0 && <div className="muted small">{s.missing_count.toLocaleString()} missing</div>}
+                  {s.coverage && (
+                    <div
+                      className="small strong"
+                      title={`checked ${new Date(s.coverage.checked_at * 1000).toLocaleString()}`}
+                    >
+                      {s.coverage.files > 0 ? Math.floor((s.coverage.in_library * 100) / s.coverage.files) : 100}% in
+                      library
+                    </div>
+                  )}
+                </td>
+                <td className="actions">
+                  <select
+                    value={s.index_level}
+                    onChange={(e) => act(() => api.setSourceLevel(s.id, e.target.value as IndexLevel))()}
+                    aria-label="Index level"
+                  >
+                    <option value="names">Names only</option>
+                    <option value="full">Full</option>
+                    <option value="agent" disabled>
+                      Agent
+                    </option>
+                  </select>
+                  <label className="check">
+                    <input
+                      type="checkbox"
+                      checked={s.removable}
+                      onChange={(e) => act(() => api.setSourceRemovable(s.id, e.target.checked))()}
+                    />
+                    Removable
+                  </label>
+                  <label className="check" title=".gitignore, .ignore, .rgignore, .docgaitignore">
+                    <input
+                      type="checkbox"
+                      checked={s.honor_ignore_files}
+                      onChange={(e) => act(() => api.setHonorIgnoreFiles(s.id, e.target.checked))()}
+                    />
+                    Ignore files
+                  </label>
+                  <button disabled={scanning || !s.online} onClick={act(() => api.scan(s.id))}>
+                    Scan
+                  </button>
+                  <button disabled={scanning} onClick={act(() => api.removeSource(s.id))} title="Files are not touched">
+                    Remove
+                  </button>
+                  <button className="link" onClick={() => setExpanded(expanded === s.id ? null : s.id)}>
+                    {expanded === s.id ? "Less ▴" : "More ▾"}
+                  </button>
+                </td>
+              </tr>
+              {expanded === s.id && (
+                <tr className="tools-row">
+                  <td colSpan={3}>
+                    <SourceTools source={s} hasLibrary={hasLibrary} onChanged={onChanged} onError={onError} />
+                  </td>
+                </tr>
+              )}
+            </Fragment>
           ))}
         </tbody>
       </table>

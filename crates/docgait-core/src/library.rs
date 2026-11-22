@@ -91,6 +91,8 @@ pub struct Source {
     pub online: bool,
     /// Folder id of the source root, for browsing.
     pub root_folder_id: Option<i64>,
+    /// The last "how much is already in the library" check, if any.
+    pub coverage: Option<crate::cleanup::Coverage>,
 }
 
 impl Source {
@@ -304,18 +306,25 @@ impl Library {
         let rows = stmt
             .query_map([], row_to_source)?
             .collect::<rusqlite::Result<Vec<_>>>()?;
+        let mut rows = rows;
+        for s in &mut rows {
+            s.coverage = self.coverage(s.id)?;
+        }
         Ok(rows)
     }
 
     pub fn source(&self, id: i64) -> Result<Source> {
-        self.reader()?
+        let mut s = self
+            .reader()?
             .query_row(
                 &format!("{} WHERE s.id = ?1", Self::SOURCE_SELECT),
                 [id],
                 row_to_source,
             )
             .optional()?
-            .with_context(|| format!("no source with id {id}"))
+            .with_context(|| format!("no source with id {id}"))?;
+        s.coverage = self.coverage(id)?;
+        Ok(s)
     }
 
     fn source_by_root(&self, root: &str) -> Result<Source> {
@@ -560,6 +569,7 @@ fn row_to_source(r: &rusqlite::Row) -> rusqlite::Result<Source> {
         total_size: r.get(10)?,
         missing_count: r.get(11)?,
         root_folder_id: r.get(12)?,
+        coverage: None,
     })
 }
 
