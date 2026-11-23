@@ -506,3 +506,39 @@ details summary {
 .section-title {
   margin: 20px 0 8px;
 }
+
+/* Source tools */
+tr.tools-row td {
+  background: var(--bg);
+}
+.tools {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 16px;
+  padding: 6px 0;
+}
+.tools h4 {
+  margin: 0 0 8px;
+  font-size: 13px;
+}
+.tools section {
+  min-width: 0;
+}
+.tools .busy {
+  grid-column: 1 / -1;
+  color: var(--accent);
+}
+.tools .busy button {
+  margin-left: 8px;
+}
+.confirm {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 10px;
+  margin-top: 10px;
+  background: var(--panel);
+}
+.reasons {
+  padding-left: 18px;
+  margin: 6px 0;
+}

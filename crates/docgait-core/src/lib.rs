@@ -2,8 +2,10 @@
 //! the desktop app are thin layers on top.
 
 pub mod app;
+pub mod cleanup;
 pub mod db;
 pub mod exclude;
+pub mod excluded;
 pub mod fsmeta;
 pub mod fsops;
 pub mod hash;
@@ -17,6 +19,8 @@ mod trash;
 pub mod watch;
 
 pub use app::{App, LibraryInfo};
+pub use cleanup::{CleanupResult, Coverage, Match};
+pub use excluded::{ExcludedEntry, ExcludedSummary};
 pub use import::{
     BatchInfo, ImportItem, ImportPlan, ImportProgress, ImportResult, Layout, UndoResult,
 };

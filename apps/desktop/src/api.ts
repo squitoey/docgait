@@ -35,6 +35,49 @@ export interface Source {
   missing_count: number;
   online: boolean;
   root_folder_id: number | null;
+  coverage: Coverage | null;
+}
+
+export interface Coverage {
+  source_id: number;
+  folder_id: number;
+  files: number;
+  in_library: number;
+  not_in_library: number;
+  bytes_in_library: number;
+  bytes_not_in_library: number;
+  checked_at: number;
+}
+
+export interface Match {
+  path: string;
+  size: number;
+  library_path: string;
+}
+
+export interface CleanupResult {
+  batch_id: number;
+  trashed: number;
+  bytes: number;
+  skipped: number;
+  folders_removed: number;
+  errors: string[];
+  cancelled: boolean;
+}
+
+export type ExcludedReason = "builtin" | "cachedir" | "pattern" | "symlink" | "ignore-file";
+
+export interface ExcludedEntry {
+  rel: string;
+  is_dir: boolean;
+  reason: ExcludedReason;
+}
+
+export interface ExcludedSummary {
+  source_id: number;
+  entries: ExcludedEntry[];
+  by_reason: Record<string, number>;
+  truncated: boolean;
 }
 
 export interface Folder {
@@ -96,7 +139,7 @@ export interface SearchResults {
 export type Layout = "merge" | "own-folder";
 
 export interface ImportProgress {
-  phase: "hashing" | "copying" | "finishing";
+  phase: "hashing" | "copying" | "finishing" | "cleaning";
   done: number;
   total: number;
   bytes_done: number;
@@ -208,6 +251,13 @@ export const api = {
   cancelImport: () => invoke<void>("cancel_import"),
   importItems: (runId: number, action: string | null, conflictsOnly: boolean, offset = 0, limit = 200) =>
     invoke<ImportItem[]>("import_items", { runId, action, conflictsOnly, offset, limit }),
+  checkCoverage: (folderId: number) => invoke<Coverage>("check_coverage", { folderId }),
+  coverageFiles: (folderId: number, inLibrary: boolean, limit = 1000) =>
+    invoke<Match[]>("coverage_files", { folderId, inLibrary, limit }),
+  cleanup: (folderId: number) => invoke<CleanupResult>("cleanup", { folderId }),
+  excluded: (sourceId: number) => invoke<ExcludedSummary>("excluded", { sourceId }),
+  includeAnyway: (sourceId: number, rel: string, reason: ExcludedReason) =>
+    invoke<void>("include_anyway", { sourceId, rel, reason }),
   history: () => invoke<BatchInfo[]>("history"),
   undoBatch: (batchId: number) => invoke<UndoResult>("undo_batch", { batchId }),
   search: (query: string, limit?: number) => invoke<SearchResults>("search", { query, limit }),

@@ -50,7 +50,6 @@ pub fn trash(path: &Path) -> Result<Option<PathBuf>> {
 
 /// Puts a trashed file back at `original`.
 #[cfg(target_os = "macos")]
-#[allow(dead_code)] // used by clean-up undo (M2 slice 2)
 pub fn restore(original: &Path, trashed_at: Option<&Path>) -> Result<()> {
     use anyhow::{bail, Context};
     let at = trashed_at.context("no record of where the file went")?;
@@ -75,7 +74,6 @@ pub fn trash(path: &Path) -> Result<Option<PathBuf>> {
 
 /// Puts a trashed file back at `original`, taking the most recently trashed match.
 #[cfg(not(target_os = "macos"))]
-#[allow(dead_code)] // used by clean-up undo (M2 slice 2)
 pub fn restore(original: &Path, trashed_at: Option<&Path>) -> Result<()> {
     if override_dir().is_some() {
         let at = trashed_at.ok_or_else(|| anyhow::anyhow!("no record of where the file went"))?;

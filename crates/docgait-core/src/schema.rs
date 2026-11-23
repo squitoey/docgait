@@ -204,4 +204,17 @@ pub const LIBRARY: &[&str] = &[
        is_suggested   INTEGER NOT NULL,        -- keeps the real name
        PRIMARY KEY (conflict_id, path)
      );",
+    // 4: where a batch worked (so undo can refresh the index there), and the last
+    // "how much of this source is already in the library" check.
+    "ALTER TABLE batch ADD COLUMN scope_source_id INTEGER;
+     ALTER TABLE batch ADD COLUMN scope_rel TEXT;
+     CREATE TABLE source_coverage (
+       source_id            INTEGER PRIMARY KEY REFERENCES source(id) ON DELETE CASCADE,
+       checked_at           INTEGER NOT NULL,
+       files                INTEGER NOT NULL,
+       in_library           INTEGER NOT NULL,
+       not_in_library       INTEGER NOT NULL,
+       bytes_in_library     INTEGER NOT NULL,
+       bytes_not_in_library INTEGER NOT NULL
+     );",
 ];

@@ -9,9 +9,9 @@ use std::time::{Duration, Instant};
 use crossbeam_channel::{unbounded, Receiver, Sender};
 use docgait_core::watch::{self, SourceWatcher};
 use docgait_core::{
-    scan, App, BatchInfo, Cursor, ImportItem, ImportPlan, ImportProgress, ImportResult, IndexLevel,
-    Layout, Library, LibraryInfo, Listing, Role, ScanProgress, ScanSummary, SearchResults, SortBy,
-    Source, Status, UndoResult,
+    scan, App, BatchInfo, CleanupResult, Coverage, Cursor, ExcludedSummary, ImportItem, ImportPlan,
+    ImportProgress, ImportResult, IndexLevel, Layout, Library, LibraryInfo, Listing, Match, Role,
+    ScanProgress, ScanSummary, SearchResults, SortBy, Source, Status, UndoResult,
 };
 use serde::Serialize;
 use tauri::{AppHandle, Emitter, Manager, State};
@@ -362,6 +362,89 @@ fn import_items(
         .map_err(err)
 }
 
+/// How much of a folder (or whole source) is already in the library.
+#[tauri::command(async)]
+fn check_coverage(
+    handle: AppHandle,
+    state: State<AppState>,
+    folder_id: i64,
+) -> CmdResult<Coverage> {
+    state.import_cancel.store(false, Ordering::SeqCst);
+    let progress = import_progress(&handle);
+    let lib = state.lib();
+    let res = lib
+        .check_coverage(folder_id, &progress, &state.import_cancel)
+        .map_err(err);
+    let _ = handle.emit(
+        "index-changed",
+        ChangedEvent {
+            library_id: lib.info.id,
+        },
+    );
+    res
+}
+
+#[tauri::command(async)]
+fn coverage_files(
+    state: State<AppState>,
+    folder_id: i64,
+    in_library: bool,
+    limit: Option<usize>,
+) -> CmdResult<Vec<Match>> {
+    state
+        .lib()
+        .coverage_files(
+            folder_id,
+            in_library,
+            limit.unwrap_or(1000),
+            &|_| {},
+            &state.import_cancel,
+        )
+        .map_err(err)
+}
+
+/// Trashes files verified to be in the library. Undoable.
+#[tauri::command(async)]
+fn cleanup(handle: AppHandle, state: State<AppState>, folder_id: i64) -> CmdResult<CleanupResult> {
+    state.import_cancel.store(false, Ordering::SeqCst);
+    let progress = import_progress(&handle);
+    let lib = state.lib();
+    let res = lib
+        .cleanup(folder_id, &progress, &state.import_cancel)
+        .map_err(err);
+    let _ = handle.emit(
+        "index-changed",
+        ChangedEvent {
+            library_id: lib.info.id,
+        },
+    );
+    res
+}
+
+#[tauri::command(async)]
+fn excluded(state: State<AppState>, source_id: i64) -> CmdResult<ExcludedSummary> {
+    state.lib().excluded(source_id).map_err(err)
+}
+
+#[tauri::command(async)]
+fn include_anyway(
+    handle: AppHandle,
+    state: State<AppState>,
+    source_id: i64,
+    rel: String,
+    reason: String,
+) -> CmdResult<()> {
+    let lib = state.lib();
+    lib.include_anyway(source_id, &rel, &reason).map_err(err)?;
+    let _ = handle.emit(
+        "index-changed",
+        ChangedEvent {
+            library_id: lib.info.id,
+        },
+    );
+    Ok(())
+}
+
 #[tauri::command(async)]
 fn history(state: State<AppState>) -> CmdResult<Vec<BatchInfo>> {
     state.lib().history(50).map_err(err)
@@ -572,6 +655,11 @@ fn main() {
             import_items,
             history,
             undo_batch,
+            check_coverage,
+            coverage_files,
+            cleanup,
+            excluded,
+            include_anyway,
             search,
             status,
             open_file,

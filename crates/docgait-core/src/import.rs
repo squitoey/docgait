@@ -119,20 +119,20 @@ pub struct UndoResult {
 type JournalRow = (i64, String, Option<String>, Option<String>, Option<Vec<u8>>);
 
 /// A file taking part in planning: an incoming file or one already in the library.
-struct Entry {
-    file_id: i64,
-    abs: PathBuf,
-    size: i64,
-    mtime_ns: i64,
-    partial: Option<[u8; 32]>,
-    full: Option<[u8; 32]>,
-    in_library: bool,
+pub(crate) struct Entry {
+    pub(crate) file_id: i64,
+    pub(crate) abs: PathBuf,
+    pub(crate) size: i64,
+    pub(crate) mtime_ns: i64,
+    pub(crate) partial: Option<[u8; 32]>,
+    pub(crate) full: Option<[u8; 32]>,
+    pub(crate) in_library: bool,
     /// Incoming: path relative to the selected folder. Library: relative to the library root.
-    rel: String,
+    pub(crate) rel: String,
     /// Incoming: name of the source it came from, used in conflict names.
-    origin: String,
+    pub(crate) origin: String,
     /// Incoming: the selected folder's own name (for the own-folder layout).
-    sel_name: String,
+    pub(crate) sel_name: String,
 }
 
 impl Library {
@@ -253,7 +253,12 @@ impl Library {
     }
 
     /// Every present file under `rel` in `src` (packages are skipped: they are folders).
-    fn files_under(&self, src: &Source, rel: &str, in_library: bool) -> Result<Vec<Entry>> {
+    pub(crate) fn files_under(
+        &self,
+        src: &Source,
+        rel: &str,
+        in_library: bool,
+    ) -> Result<Vec<Entry>> {
         let conn = self.reader()?;
         let mut stmt = conn.prepare(
             "SELECT f.id, d.rel_path, f.name, f.size, f.mtime_ns, f.partial_hash, f.content_hash
@@ -306,7 +311,7 @@ impl Library {
     }
 
     /// Size → partial hash → full hash, only for files that could be copies of an incoming file.
-    fn hash_colliding(
+    pub(crate) fn hash_colliding(
         &self,
         entries: &mut [Entry],
         progress: ImportProgressFn,
@@ -814,7 +819,7 @@ impl Library {
     }
 
     #[allow(clippy::too_many_arguments)]
-    fn journal(
+    pub(crate) fn journal(
         &self,
         batch_id: i64,
         op: &str,
@@ -847,8 +852,8 @@ impl Library {
         let conn = self.reader()?;
         let mut stmt = conn.prepare(
             "SELECT b.id, b.kind, b.created_at, b.description, b.state,
-                    (SELECT COUNT(*) FROM journal j WHERE j.batch_id = b.id AND j.status = 'done' AND j.op <> 'mkdir'),
-                    (SELECT COUNT(*) FROM journal j WHERE j.batch_id = b.id AND j.status = 'undone' AND j.op <> 'mkdir')
+                    (SELECT COUNT(*) FROM journal j WHERE j.batch_id = b.id AND j.status = 'done' AND j.op NOT IN ('mkdir', 'rmdir')),
+                    (SELECT COUNT(*) FROM journal j WHERE j.batch_id = b.id AND j.status = 'undone' AND j.op NOT IN ('mkdir', 'rmdir'))
                FROM batch b ORDER BY b.id DESC LIMIT ?1",
         )?;
         let rows = stmt
@@ -889,6 +894,14 @@ impl Library {
         };
         for (jid, op, from, to, h) in entries {
             let outcome = (|| -> Result<()> {
+                if op == "trash" {
+                    // from = the original path, to = where the trash put it (when known).
+                    let original = PathBuf::from(from.context("trash entry without a path")?);
+                    if original.exists() {
+                        bail!("{} exists again; not restored over it", original.display());
+                    }
+                    return trash::restore(&original, to.as_deref().map(Path::new));
+                }
                 let to = PathBuf::from(to.context("journal entry without a destination")?);
                 match op.as_str() {
                     "copy" => {
@@ -914,6 +927,10 @@ impl Library {
                         let _ = std::fs::remove_dir(&to);
                         Ok(())
                     }
+                    "rmdir" => {
+                        std::fs::create_dir_all(&to)?;
+                        Ok(())
+                    }
                     other => bail!("cannot undo {other}"),
                 }
             })();
@@ -921,7 +938,7 @@ impl Library {
             match outcome {
                 Ok(()) => {
                     conn.execute("UPDATE journal SET status = 'undone' WHERE id = ?1", [jid])?;
-                    if op != "mkdir" {
+                    if op != "mkdir" && op != "rmdir" {
                         res.undone += 1;
                     }
                 }
@@ -961,6 +978,16 @@ impl Library {
         }
         if let Some((_, src, dest)) = run {
             scan::scan_folder(self, src, &dest, &|_| {}, &AtomicBool::new(false))?;
+        } else if let Some((src, rel)) = self
+            .reader()?
+            .query_row(
+                "SELECT scope_source_id, scope_rel FROM batch WHERE id = ?1 AND scope_source_id IS NOT NULL",
+                [batch_id],
+                |r| Ok((r.get::<_, i64>(0)?, r.get::<_, String>(1)?)),
+            )
+            .optional()?
+        {
+            scan::scan_folder(self, src, &rel, &|_| {}, &AtomicBool::new(false))?;
         }
         Ok(res)
     }
@@ -1004,12 +1031,12 @@ struct Decided {
 }
 
 #[derive(Hash, PartialEq, Eq, Clone, Copy)]
-enum Key {
+pub(crate) enum Key {
     Full([u8; 32]),
     Unique(usize),
 }
 
-fn key_of(entries: &[Entry], i: usize) -> Key {
+pub(crate) fn key_of(entries: &[Entry], i: usize) -> Key {
     match entries[i].full {
         // Zero-byte files are all the same content.
         _ if entries[i].size == 0 => Key::Full([0; 32]),
