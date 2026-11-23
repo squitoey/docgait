@@ -479,6 +479,11 @@ impl Library {
                 } else if !ctx.online(r) {
                     item.status = "skip";
                     item.note = Some("its source is offline".into());
+                } else if crate::exclude::ignore_file_in_use(&r.path) {
+                    item.status = "skip";
+                    item.note = Some(
+                        "an ignore file that still decides what is indexed in its folder".into(),
+                    );
                 } else if let Err(e) = self.check_writable(&r.path) {
                     item.status = "skip";
                     item.note = Some(format!("{e:#}"));

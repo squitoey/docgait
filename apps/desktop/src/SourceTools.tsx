@@ -178,6 +178,8 @@ export default function SourceTools({ source, hasLibrary, onChanged, onError }: 
                 Moved {cleaned.trashed.toLocaleString()} files ({humanSize(cleaned.bytes)}) to the trash
                 {cleaned.folders_removed > 0 && ` and removed ${cleaned.folders_removed} empty folders`}.
                 {cleaned.skipped > 0 && ` ${cleaned.skipped} skipped (changed since they were checked).`}
+                {cleaned.kept_ignore_files > 0 &&
+                  ` Kept ${cleaned.kept_ignore_files} ignore file(s) whose folders still hold excluded files.`}
               </p>
               {cleaned.errors.length > 0 && (
                 <ul className="filelist small">

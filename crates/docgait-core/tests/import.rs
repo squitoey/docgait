@@ -348,3 +348,53 @@ fn refuses_unsafe_imports() {
         .unwrap();
     assert_eq!(again.copied, 0);
 }
+
+#[test]
+fn vault_and_repo_folders_travel_with_their_content() {
+    let f = fixture();
+    let cancel = AtomicBool::new(false);
+    // A vault in A and C (different settings), a repository in B. All excluded from the index.
+    write(&f.copies[0], "Vault/.obsidian/app.json", "{\"from\":\"A\"}");
+    write(&f.copies[0], "Vault/Home.md", "see [[Ideas]]");
+    write(&f.copies[2], "Vault/.obsidian/app.json", "{\"from\":\"C\"}");
+    write(&f.copies[2], "Vault/Ideas.md", "ideas");
+    write(&f.copies[1], "Code/tool/.git/HEAD", "ref: refs/heads/main");
+    write(&f.copies[1], "Code/tool/.git/objects/ab/cdef", "blob");
+    write(&f.copies[1], "Code/tool/main.rs", "fn main() {}");
+    // At the root of a copy: never makes the whole library a repository.
+    write(&f.copies[1], ".git/HEAD", "ref: refs/heads/root");
+    for s in f.lib.sources().unwrap() {
+        scan::scan_source(&f.lib, s.id, &|_| {}, &cancel).unwrap();
+    }
+    let plan = f
+        .lib
+        .plan_import(
+            &root_folders(&f.lib),
+            "",
+            Layout::Merge,
+            &no_progress,
+            &cancel,
+        )
+        .unwrap();
+    let res = f
+        .lib
+        .execute_import(plan.run_id, &no_progress, &cancel)
+        .unwrap();
+    assert_eq!(res.failed, 0, "{:?}", res.errors);
+    let got = tree(&f.library);
+    assert!(got.contains("Vault/.obsidian/app.json"), "{got:?}");
+    assert!(got.contains("Code/tool/.git/HEAD") && got.contains("Code/tool/.git/objects/ab/cdef"));
+    assert!(
+        !got.contains(".git/HEAD"),
+        "library root must not become a repo"
+    );
+    // One vault's settings, never merged with the other's.
+    let app = fs::read_to_string(f.library.join("Vault/.obsidian/app.json")).unwrap();
+    assert!(app.contains("\"A\"") || app.contains("\"C\""));
+    assert!(!got.iter().any(|p| p.contains(".obsidian/app.conflict")));
+
+    // Undo takes the carried folders away too.
+    f.lib.undo_batch(res.batch_id).unwrap();
+    assert!(!f.library.join("Vault/.obsidian/app.json").exists());
+    assert!(!f.library.join("Code/tool/.git/HEAD").exists());
+}

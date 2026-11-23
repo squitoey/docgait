@@ -13,6 +13,7 @@ use anyhow::{bail, Context, Result};
 use rusqlite::params;
 use serde::Serialize;
 
+use crate::exclude::{ignore_file_in_use, is_ignore_file};
 use crate::import::{key_of, Entry, ImportProgress, ImportProgressFn, Key};
 use crate::library::Role;
 use crate::{db, hash, scan, trash, Library, Source};
@@ -45,6 +46,8 @@ pub struct CleanupResult {
     /// Not trashed because something no longer checked out (changed, missing library copy).
     pub skipped: u64,
     pub folders_removed: u64,
+    /// Ignore files left in place because their folder still holds excluded files.
+    pub kept_ignore_files: u64,
     pub errors: Vec<String>,
     pub cancelled: bool,
 }
@@ -244,7 +247,8 @@ impl Library {
             ..Default::default()
         };
         let mut order: Vec<(usize, usize)> = c.matches.iter().map(|(&a, &b)| (a, b)).collect();
-        order.sort_unstable();
+        // Ignore files last: they go only if nothing else is left in their folder.
+        order.sort_unstable_by_key(|&(i, li)| (is_ignore_file(&c.entries[i].abs), i, li));
         let total = order.len() as u64;
         let bytes_total: u64 = order.iter().map(|(i, _)| c.entries[*i].size as u64).sum();
         let mut bytes_done = 0u64;
@@ -264,6 +268,10 @@ impl Library {
             let src = &c.entries[i];
             let lib = &c.entries[li];
             bytes_done += src.size as u64;
+            if ignore_file_in_use(&src.abs) {
+                res.kept_ignore_files += 1;
+                continue;
+            }
             let verified = (|| -> Result<()> {
                 let want = lib.full.context("no hash for the library copy")?;
                 let md = std::fs::metadata(&src.abs)

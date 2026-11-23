@@ -31,8 +31,14 @@ make test    # Rust tests
 make lint    # the CI lint checks
 make check   # lint + test
 make fmt     # format everything
+make demo    # fresh test data in target/demo, then open the app on it
 make help    # list targets
 ```
+
+`make demo` never touches your real data or Trash: the app's data and trash live in
+`target/demo` too. Use `target/demo/Library` as the library folder and
+`target/demo/drives/CopyA`, `CopyB`, `CopyC` as sources (overlapping copies with a conflict,
+duplicates, a vault, and a code project with ignored build output).
 
 ### Debian
 
@@ -140,7 +146,9 @@ or trashing it, warns first. Undo restores the notes' text.
 A separate step, never part of the import. **Check against library** reports how much of a source
 is already in the library (byte-identical, by hash). **Clean up** moves only those files to the
 trash, re-checking each one and its library copy right before, then removes folders it emptied.
-Files the library does not have are never touched. Undo restores everything from the trash.
+Files the library does not have are never touched. An ignore file (`.gitignore` and friends)
+stays while its folder still holds excluded files, so they don't suddenly get indexed. Undo
+restores everything from the trash.
 
 ## Duplicates
 
@@ -192,6 +200,9 @@ are picked up by a rescan when it starts.
   working files of a repository are still indexed.
 - Dependency and build folders (`node_modules`, Python virtualenvs, `__pycache__`, Rust `target`
   next to `Cargo.toml`, …), editor config (`.obsidian`, `.idea`, `.vscode`).
+- Skipped for indexing is not skipped for importing: a vault's `.obsidian/` and a repository's
+  `.git` (or `.hg`, `.svn`, `.jj`) are copied whole with their folder, unless the destination
+  already has one (never merged), and never at the library root.
 - OS and app junk (`.DS_Store`, `._*`, `Thumbs.db`, `desktop.ini`, Office/LibreOffice lock files,
   partial downloads, …) and folders tagged with `CACHEDIR.TAG`.
 - Anything matched by `.gitignore`, `.ignore`, `.rgignore` or `.docgaitignore`. `.docgaitignore`
