@@ -9,10 +9,11 @@ use std::time::{Duration, Instant};
 use crossbeam_channel::{unbounded, Receiver, Sender};
 use docgait_core::watch::{self, SourceWatcher};
 use docgait_core::{
-    scan, App, BatchInfo, CleanupResult, ConflictView, Coverage, Cursor, ExcludedSummary,
-    ImportItem, ImportPlan, ImportProgress, ImportResult, IndexLevel, Layout, Library, LibraryInfo,
-    Listing, Match, MergeStart, OrganiseOp, OrganisePlan, OrganiseResult, Resolution, Role,
-    ScanProgress, ScanSummary, SearchResults, SortBy, Source, Status, TagCount, UndoResult,
+    scan, App, BatchInfo, CleanupResult, ConflictView, Coverage, Cursor, DedupeOp, DedupePlan,
+    DedupeResult, DupeFilter, DupeGroup, DupePage, DupeScan, ExcludedSummary, ImportItem,
+    ImportPlan, ImportProgress, ImportResult, IndexLevel, Layout, Library, LibraryInfo, Listing,
+    Match, MergeStart, OrganiseOp, OrganisePlan, OrganiseResult, Resolution, Role, ScanProgress,
+    ScanSummary, SearchResults, SortBy, Source, Status, TagCount, UndoResult,
 };
 use serde::Serialize;
 use tauri::{AppHandle, Emitter, Manager, State};
@@ -620,6 +621,102 @@ fn remove_tag(state: State<AppState>, file_ids: Vec<i64>, tag: String) -> CmdRes
     state.lib().remove_tag(&file_ids, &tag).map_err(err)
 }
 
+/// Hashes what is needed to find exact duplicates (everything, or one folder's possible copies).
+#[tauri::command(async)]
+fn find_duplicates(
+    handle: AppHandle,
+    state: State<AppState>,
+    folder_id: Option<i64>,
+) -> CmdResult<DupeScan> {
+    state.import_cancel.store(false, Ordering::SeqCst);
+    let progress = import_progress(&handle);
+    let lib = state.lib();
+    let res = lib
+        .find_duplicates(folder_id, &progress, &state.import_cancel)
+        .map_err(err);
+    let _ = handle.emit(
+        "index-changed",
+        ChangedEvent {
+            library_id: lib.info.id,
+        },
+    );
+    res
+}
+
+#[tauri::command(async)]
+fn duplicate_groups(
+    state: State<AppState>,
+    filter: DupeFilter,
+    offset: Option<usize>,
+    limit: Option<usize>,
+) -> CmdResult<DupePage> {
+    state
+        .lib()
+        .duplicate_groups(&filter, offset.unwrap_or(0), limit.unwrap_or(100))
+        .map_err(err)
+}
+
+#[tauri::command(async)]
+fn duplicate_group_of(state: State<AppState>, file_id: i64) -> CmdResult<Option<DupeGroup>> {
+    state.lib().duplicate_group_of(file_id).map_err(err)
+}
+
+#[tauri::command(async)]
+fn duplicate_counts(
+    state: State<AppState>,
+    ids: Vec<i64>,
+) -> CmdResult<std::collections::HashMap<i64, i64>> {
+    state.lib().duplicate_counts(&ids).map_err(err)
+}
+
+#[tauri::command(async)]
+fn auto_select_duplicates(
+    state: State<AppState>,
+    filter: DupeFilter,
+    safe_only: bool,
+) -> CmdResult<Vec<i64>> {
+    state
+        .lib()
+        .auto_select_duplicates(&filter, safe_only)
+        .map_err(err)
+}
+
+#[tauri::command(async)]
+fn ignore_duplicate_group(state: State<AppState>, hash: String, ignore: bool) -> CmdResult<()> {
+    state
+        .lib()
+        .ignore_duplicate_group(&hash, ignore)
+        .map_err(err)
+}
+
+#[tauri::command(async)]
+fn plan_dedupe(state: State<AppState>, ids: Vec<i64>, op: DedupeOp) -> CmdResult<DedupePlan> {
+    state.lib().plan_dedupe(&ids, op).map_err(err)
+}
+
+/// Trashes or hard-links duplicates. Undoable.
+#[tauri::command(async)]
+fn dedupe(
+    handle: AppHandle,
+    state: State<AppState>,
+    ids: Vec<i64>,
+    op: DedupeOp,
+) -> CmdResult<DedupeResult> {
+    state.import_cancel.store(false, Ordering::SeqCst);
+    let progress = import_progress(&handle);
+    let lib = state.lib();
+    let res = lib
+        .dedupe(&ids, op, &progress, &state.import_cancel)
+        .map_err(err);
+    let _ = handle.emit(
+        "index-changed",
+        ChangedEvent {
+            library_id: lib.info.id,
+        },
+    );
+    res
+}
+
 #[tauri::command(async)]
 fn history(state: State<AppState>) -> CmdResult<Vec<BatchInfo>> {
     state.lib().history(50).map_err(err)
@@ -849,6 +946,14 @@ fn main() {
             check_coverage,
             coverage_files,
             cleanup,
+            find_duplicates,
+            duplicate_groups,
+            duplicate_group_of,
+            duplicate_counts,
+            auto_select_duplicates,
+            ignore_duplicate_group,
+            plan_dedupe,
+            dedupe,
             excluded,
             include_anyway,
             search,

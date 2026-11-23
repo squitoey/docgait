@@ -10,6 +10,7 @@
   --hover: #f0f2f6;
   --selected: #e3ecfd;
   --warn: #b25b00;
+  --ok: #2e8b57;
   font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Ubuntu, Cantarell, sans-serif;
   font-size: 14px;
   color: var(--text);
@@ -27,6 +28,7 @@
     --hover: #2a2e37;
     --selected: #253553;
     --warn: #f0a24a;
+    --ok: #5cc98a;
   }
 }
 * {
@@ -675,4 +677,50 @@ table.files:focus {
   border-radius: 10px;
   padding: 0 4px 0 8px;
   font-size: 12px;
+}
+
+/* Duplicates */
+.toolbar {
+  position: sticky;
+  top: -16px;
+  background: var(--bg);
+  padding: 8px 0;
+  z-index: 1;
+}
+.dupe-group {
+  padding: 10px 12px;
+}
+.dupe-group.ignored {
+  opacity: 0.6;
+}
+.dupe-head {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 6px;
+}
+.dupe-head .tag {
+  margin-left: 6px;
+}
+.dupe-members {
+  width: 100%;
+  border-collapse: collapse;
+}
+.dupe-members td {
+  padding: 3px 6px;
+  vertical-align: middle;
+}
+.dupe-members tr.selected {
+  background: var(--selected);
+}
+.dupe-members .tag {
+  margin-right: 4px;
+}
+.tag.ok {
+  border-color: var(--ok);
+  color: var(--ok);
+}
+.dupe-badge {
+  margin-left: 6px;
+  cursor: help;
 }

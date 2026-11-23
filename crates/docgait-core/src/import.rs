@@ -116,7 +116,14 @@ pub struct UndoResult {
 }
 
 /// id, op, from, to, content hash.
-type JournalRow = (i64, String, Option<String>, Option<String>, Option<Vec<u8>>);
+type JournalRow = (
+    i64,
+    String,
+    Option<String>,
+    Option<String>,
+    Option<Vec<u8>>,
+    Option<i64>,
+);
 
 /// A file taking part in planning: an incoming file or one already in the library.
 pub(crate) struct Entry {
@@ -889,12 +896,19 @@ impl Library {
         let entries: Vec<JournalRow> = {
             let conn = self.reader()?;
             let mut stmt = conn.prepare(
-                "SELECT id, op, from_path, to_path, content_hash FROM journal
+                "SELECT id, op, from_path, to_path, content_hash, mtime_ns FROM journal
                   WHERE batch_id = ?1 AND status = 'done' ORDER BY id DESC",
             )?;
             let rows = stmt
                 .query_map([batch_id], |r| {
-                    Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?))
+                    Ok((
+                        r.get(0)?,
+                        r.get(1)?,
+                        r.get(2)?,
+                        r.get(3)?,
+                        r.get(4)?,
+                        r.get(5)?,
+                    ))
                 })?
                 .collect::<rusqlite::Result<Vec<_>>>()?;
             rows
@@ -903,8 +917,21 @@ impl Library {
             batch_id,
             ..Default::default()
         };
-        for (jid, op, from, to, h) in entries {
+        // Files put back outside the batch's scope: their folders are rescanned afterwards.
+        let mut touched: Vec<PathBuf> = Vec::new();
+        for (jid, op, from, to, h, mtime) in entries {
+            if op == "trash" || op == "link" {
+                if let Some(f) = &from {
+                    touched.push(PathBuf::from(f));
+                }
+            }
             let outcome = (|| -> Result<()> {
+                if op == "link" {
+                    // from = the file that became a link, to = the copy it points at.
+                    let path = PathBuf::from(from.as_deref().context("link without a path")?);
+                    let keep = PathBuf::from(to.as_deref().context("link without a target")?);
+                    return crate::dupes::unlink_copy(&path, &keep, mtime);
+                }
                 if op == "trash" {
                     // from = the original path, to = where the trash put it (when known).
                     let original = PathBuf::from(from.context("trash entry without a path")?);
@@ -1021,6 +1048,38 @@ impl Library {
                 )?;
                 if res.failed == 0 {
                     conn.execute("DELETE FROM conflict WHERE run_id = ?1", [run_id])?;
+                }
+            }
+        }
+        let scoped = run.is_some()
+            || self.reader()?.query_row(
+                "SELECT scope_source_id IS NOT NULL FROM batch WHERE id = ?1",
+                [batch_id],
+                |r| r.get::<_, bool>(0),
+            )?;
+        if !scoped {
+            let mut parents: Vec<PathBuf> = touched
+                .iter()
+                .filter_map(|p| p.parent().map(Path::to_path_buf))
+                .collect();
+            parents.sort();
+            parents.dedup();
+            // A folder already covered by a rescanned parent needs no scan of its own.
+            let mut done: Vec<PathBuf> = Vec::new();
+            for dir in parents {
+                if done.iter().any(|d| dir.starts_with(d)) {
+                    continue;
+                }
+                if let Some(src) = self.source_containing(&dir)? {
+                    if !src.online {
+                        continue;
+                    }
+                    let rel = dir
+                        .strip_prefix(&src.root)
+                        .map(crate::library::rel_string)
+                        .unwrap_or_default();
+                    scan::scan_folder(self, src.id, &rel, &|_| {}, &AtomicBool::new(false))?;
+                    done.push(dir);
                 }
             }
         }

@@ -101,6 +101,39 @@ enum Cmd {
         #[arg(long)]
         yes: bool,
     },
+    /// Find exact duplicates (hashing only files that share a size) and list the groups.
+    Dupes {
+        /// Only files that could be copies of something in this folder (default: everything).
+        path: Option<PathBuf>,
+        /// Only groups with copies on import sources that the library already has.
+        #[arg(long)]
+        safe: bool,
+        /// Only this kind (document, image, audio, ...).
+        #[arg(long)]
+        kind: Option<String>,
+        /// Show at most this many groups.
+        #[arg(long, default_value_t = 20)]
+        limit: usize,
+        /// List the stored groups without hashing anything new.
+        #[arg(long)]
+        no_find: bool,
+        #[arg(long)]
+        json: bool,
+    },
+    /// Remove duplicates found by `docgait dupes`, keeping the suggested copy of each group.
+    /// A dry run unless --yes. The last copy of anything is never removed.
+    Dedupe {
+        /// Only groups touching this folder (default: everything).
+        path: Option<PathBuf>,
+        /// Only copies on import sources that the library already has.
+        #[arg(long)]
+        safe: bool,
+        /// Replace copies with hard links instead of trashing them (same drive only).
+        #[arg(long)]
+        hardlink: bool,
+        #[arg(long)]
+        yes: bool,
+    },
     /// What a source's scan left out, and why.
     Excluded {
         /// The source folder.
@@ -427,6 +460,131 @@ fn run(cli: Cli) -> Result<()> {
                 r.trashed,
                 human(r.bytes as i64),
                 r.folders_removed,
+                r.skipped,
+                r.batch_id
+            );
+            for e in r.errors {
+                println!("  {e}");
+            }
+            Ok(())
+        }
+        Cmd::Dupes {
+            path,
+            safe,
+            kind,
+            limit,
+            no_find,
+            json,
+        } => {
+            let folder = path.map(|p| lib.folder_for_path(&p)).transpose()?;
+            if !no_find {
+                let progress = |p: &ImportProgress| {
+                    if p.total > 0 {
+                        eprint!("\r{}: {}/{}   ", p.phase, p.done, p.total);
+                    }
+                };
+                let f = lib.find_duplicates(
+                    folder.as_ref().map(|f| f.id),
+                    &progress,
+                    &AtomicBool::new(false),
+                )?;
+                eprint!("\r\x1b[K");
+                eprintln!("compared {} files", f.files);
+            }
+            let filter = docgait_core::DupeFilter {
+                folder_id: folder.map(|f| f.id),
+                kind,
+                safe_only: safe,
+                ..Default::default()
+            };
+            let page = lib.duplicate_groups(&filter, 0, limit)?;
+            if json {
+                println!("{}", serde_json::to_string_pretty(&page)?);
+                return Ok(());
+            }
+            println!(
+                "{} groups, {} files, {} reclaimable; {} copies ({}) on import sources are already in the library",
+                page.total_groups,
+                page.total_files,
+                human(page.total_reclaimable),
+                page.safe_files,
+                human(page.safe_bytes)
+            );
+            for g in &page.groups {
+                println!("\n{} × {} ({})", g.members.len(), human(g.size), g.kind);
+                for m in &g.members {
+                    let mut tags = Vec::new();
+                    if m.keeper {
+                        tags.push("keep");
+                    }
+                    if m.safe {
+                        tags.push("safe");
+                    }
+                    if m.hardlinked {
+                        tags.push("linked");
+                    }
+                    if m.offline {
+                        tags.push("offline");
+                    }
+                    let mark = if m.keeper { "*" } else { " " };
+                    let t = if tags.is_empty() {
+                        String::new()
+                    } else {
+                        format!("  [{}]", tags.join(", "))
+                    };
+                    println!("  {mark} {}{t}", m.path);
+                }
+            }
+            if page.total_groups > page.groups.len() {
+                println!(
+                    "\n… {} more groups (--limit)",
+                    page.total_groups - page.groups.len()
+                );
+            }
+            Ok(())
+        }
+        Cmd::Dedupe {
+            path,
+            safe,
+            hardlink,
+            yes,
+        } => {
+            let folder = path.map(|p| lib.folder_for_path(&p)).transpose()?;
+            let filter = docgait_core::DupeFilter {
+                folder_id: folder.map(|f| f.id),
+                ..Default::default()
+            };
+            let ids = lib.auto_select_duplicates(&filter, safe)?;
+            let op = if hardlink {
+                docgait_core::DedupeOp::Hardlink
+            } else {
+                docgait_core::DedupeOp::Trash
+            };
+            let plan = lib.plan_dedupe(&ids, op)?;
+            let verb = if hardlink { "hard-link" } else { "trash" };
+            if !yes {
+                for i in plan.items.iter().filter(|i| i.status == "ok").take(50) {
+                    println!("  {}  (keeps {})", i.path, i.keep.as_deref().unwrap_or(""));
+                }
+                println!(
+                    "would {verb} {} files ({}); {} skipped. Add --yes to do it.",
+                    plan.ok,
+                    human(plan.bytes),
+                    plan.skipped
+                );
+                return Ok(());
+            }
+            let progress = |p: &ImportProgress| {
+                if p.total > 0 {
+                    eprint!("\r{}: {}/{}   ", p.phase, p.done, p.total);
+                }
+            };
+            let r = lib.dedupe(&ids, op, &progress, &AtomicBool::new(false))?;
+            eprint!("\r\x1b[K");
+            println!(
+                "{verb}: {} files ({}), skipped {}. Undo with `docgait undo {}`.",
+                r.done,
+                human(r.bytes),
                 r.skipped,
                 r.batch_id
             );

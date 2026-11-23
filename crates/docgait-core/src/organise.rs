@@ -425,7 +425,7 @@ impl Library {
     }
 
     /// Offline sources are read-only, and paths must be inside a source of this library.
-    fn check_writable(&self, path: &Path) -> Result<()> {
+    pub(crate) fn check_writable(&self, path: &Path) -> Result<()> {
         let src = self.source_containing(path)?.with_context(|| {
             format!(
                 "{} is not inside any source of this library",

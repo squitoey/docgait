@@ -5,6 +5,7 @@ import {
   errorText,
   formatDate,
   humanSize,
+  type DupeGroup,
   type FileEntry,
   type Listing,
   type OrganiseOp,
@@ -43,6 +44,9 @@ export default function Browse({ folderId, highlight, revision, onNavigate, onCh
   const [tags, setTags] = useState<string[]>([]);
   const [newTag, setNewTag] = useState("");
   const [dropTarget, setDropTarget] = useState<number | null>(null);
+  // Other copies of each listed file (from hashes found so far).
+  const [dupes, setDupes] = useState<Record<string, number>>({});
+  const [copies, setCopies] = useState<DupeGroup | null>(null);
 
   // A new folder (or a new highlight) resets the selection; index refreshes keep it.
   useEffect(() => {
@@ -65,6 +69,21 @@ export default function Browse({ folderId, highlight, revision, onNavigate, onCh
     };
   }, [folderId, sort, revision, onError]);
 
+  useEffect(() => {
+    let live = true;
+    if (files.length === 0) {
+      setDupes({});
+      return;
+    }
+    api
+      .duplicateCounts(files.map((f) => f.id))
+      .then((d) => live && setDupes(d))
+      .catch(() => live && setDupes({}));
+    return () => {
+      live = false;
+    };
+  }, [files]);
+
   const selFiles = files.filter((f) => selected.has(`f${f.id}`));
   const selFolders = (listing?.folders ?? []).filter((d) => selected.has(`d${d.id}`));
   const single = selFiles.length === 1 && selFolders.length === 0 ? selFiles[0] : null;
@@ -79,6 +98,20 @@ export default function Browse({ folderId, highlight, revision, onNavigate, onCh
       .then(setTags)
       .catch((e) => onError(errorText(e)));
   }, [single?.id, revision, onError]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  useEffect(() => {
+    let live = true;
+    setCopies(null);
+    if (single && dupes[single.id]) {
+      api
+        .duplicateGroupOf(single.id)
+        .then((g) => live && setCopies(g))
+        .catch(() => {});
+    }
+    return () => {
+      live = false;
+    };
+  }, [single?.id, dupes]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const more = async () => {
     if (!listing?.next) return;
@@ -388,7 +421,17 @@ export default function Browse({ folderId, highlight, revision, onNavigate, onCh
                 onClick={(e) => click(`f${f.id}`, e)}
                 onDoubleClick={run(() => api.openFile(f.id))}
               >
-                <td className="grow">{f.name}</td>
+                <td className="grow">
+                  {f.name}
+                  {dupes[f.id] > 0 && (
+                    <span
+                      className="tag dupe-badge"
+                      title={`${dupes[f.id]} other identical cop${dupes[f.id] === 1 ? "y" : "ies"}`}
+                    >
+                      ×{dupes[f.id] + 1}
+                    </span>
+                  )}
+                </td>
                 <td className="num">{humanSize(f.size)}</td>
                 <td className="num">{formatDate(f.mtime_ns)}</td>
                 <td className="muted">{f.missing ? "missing" : f.kind}</td>
@@ -428,6 +471,21 @@ export default function Browse({ folderId, highlight, revision, onNavigate, onCh
                 </>
               )}
             </dl>
+            {copies && (
+              <div className="copies small">
+                <span className="caption">Identical copies</span>
+                <ul className="filelist">
+                  {copies.members
+                    .filter((m) => m.file_id !== single.id)
+                    .map((m) => (
+                      <li key={m.file_id} title={m.path}>
+                        {m.keeper && "★ "}
+                        {m.path}
+                      </li>
+                    ))}
+                </ul>
+              </div>
+            )}
             <div className="row">
               <button disabled={single.missing} onClick={run(() => api.openFile(single.id))}>
                 Open

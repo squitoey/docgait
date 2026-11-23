@@ -4,6 +4,7 @@ import Browse from "./Browse";
 import Search from "./Search";
 import Import from "./Import";
 import Conflicts from "./Conflicts";
+import Duplicates from "./Duplicates";
 import Sources from "./Sources";
 import LibraryPicker from "./LibraryPicker";
 
@@ -12,6 +13,7 @@ type View =
   | { kind: "search" }
   | { kind: "import" }
   | { kind: "conflicts" }
+  | { kind: "duplicates" }
   | { kind: "browse"; folderId: number; highlight?: number };
 
 export default function App() {
@@ -121,6 +123,12 @@ export default function App() {
             <span className="nav-label">Conflicts</span>
             {conflictCount > 0 && <span className="badge">{conflictCount}</span>}
           </button>
+          <button
+            className={view.kind === "duplicates" ? "nav active" : "nav"}
+            onClick={() => setView({ kind: "duplicates" })}
+          >
+            Duplicates
+          </button>
           <div className="nav-heading">Browse</div>
           {sources.length === 0 && <div className="nav-empty">No sources yet</div>}
           {sources.map((s) => (
@@ -143,7 +151,9 @@ export default function App() {
       </aside>
 
       <main className="main">
-        {view.kind === "conflicts" ? (
+        {view.kind === "duplicates" ? (
+          <Duplicates sources={sources} revision={revision} onChanged={refresh} onError={setMessage} />
+        ) : view.kind === "conflicts" ? (
           <Conflicts revision={revision} onChanged={refresh} onError={setMessage} />
         ) : view.kind === "import" ? (
           <Import sources={sources} revision={revision} onChanged={refresh} onError={setMessage} />
