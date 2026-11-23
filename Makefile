@@ -18,7 +18,7 @@ else
 endif
 
 .DEFAULT_GOAL := help
-.PHONY: help install build build-cli build-app dev test lint fmt check run clean
+.PHONY: help install build build-cli build-app dev test lint fmt check run demo clean
 
 help: ## List targets
 	@grep -E '^[a-z-]+:.*## ' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*## "} {printf "  \033[1m%-10s\033[0m %s\n", $$1, $$2}'
@@ -60,6 +60,16 @@ ifeq ($(UNAME),Darwin)
 	open $(APP_OUT)
 else
 	@echo "Install with: sudo apt install ./$(APP_OUT)docgait_*.deb"
+endif
+
+DEMO := $(CURDIR)/target/demo
+demo: build-app ## Fresh test data in target/demo, then open the app on it (your real data is untouched)
+	python3 scripts/demo-data.py $(DEMO)
+	@echo "Library folder: $(DEMO)/Library   Sources: $(DEMO)/drives/CopyA, CopyB, CopyC"
+ifeq ($(UNAME),Darwin)
+	DOCGAIT_DATA_DIR=$(DEMO)/data DOCGAIT_TRASH_DIR=$(DEMO)/trash $(APP_OUT)/Contents/MacOS/docgait-desktop
+else
+	DOCGAIT_DATA_DIR=$(DEMO)/data DOCGAIT_TRASH_DIR=$(DEMO)/trash target/release/docgait-desktop
 endif
 
 clean: ## Remove build output
