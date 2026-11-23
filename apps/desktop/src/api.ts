@@ -303,6 +303,84 @@ export interface ScanFinished {
   error: string | null;
 }
 
+export interface DupeScan {
+  files: number;
+  groups: number;
+  duplicate_files: number;
+  reclaimable: number;
+  cancelled: boolean;
+}
+
+export interface DupeFilter {
+  source_id?: number | null;
+  folder_id?: number | null;
+  kind?: string | null;
+  safe_only?: boolean;
+  include_ignored?: boolean;
+}
+
+export interface DupeMember {
+  file_id: number;
+  path: string;
+  source_id: number;
+  role: Role;
+  size: number;
+  mtime_ns: number;
+  keeper: boolean;
+  hardlinked: boolean;
+  safe: boolean;
+  offline: boolean;
+}
+
+export interface DupeGroup {
+  hash: string;
+  size: number;
+  kind: string;
+  keeper: number;
+  members: DupeMember[];
+  reclaimable: number;
+  in_library: boolean;
+  ignored: boolean;
+}
+
+export interface DupePage {
+  total_groups: number;
+  total_files: number;
+  total_reclaimable: number;
+  safe_files: number;
+  safe_bytes: number;
+  groups: DupeGroup[];
+}
+
+export type DedupeOp = "trash" | "hardlink";
+
+export interface DedupeItem {
+  file_id: number;
+  path: string;
+  size: number;
+  status: "ok" | "skip" | "blocked";
+  note: string | null;
+  keep: string | null;
+}
+
+export interface DedupePlan {
+  op: DedupeOp;
+  items: DedupeItem[];
+  ok: number;
+  skipped: number;
+  blocked: number;
+  bytes: number;
+}
+
+export interface DedupeResult {
+  batch_id: number;
+  done: number;
+  skipped: number;
+  bytes: number;
+  errors: string[];
+  cancelled: boolean;
+}
+
 export const api = {
   appInfo: () => invoke<AppInfo>("app_info"),
   createLibrary: (name: string) => invoke<LibraryInfo>("create_library", { name }),
@@ -330,6 +408,16 @@ export const api = {
   coverageFiles: (folderId: number, inLibrary: boolean, limit = 1000) =>
     invoke<Match[]>("coverage_files", { folderId, inLibrary, limit }),
   cleanup: (folderId: number) => invoke<CleanupResult>("cleanup", { folderId }),
+  findDuplicates: (folderId?: number | null) => invoke<DupeScan>("find_duplicates", { folderId: folderId ?? null }),
+  duplicateGroups: (filter: DupeFilter, offset = 0, limit = 100) =>
+    invoke<DupePage>("duplicate_groups", { filter, offset, limit }),
+  duplicateGroupOf: (fileId: number) => invoke<DupeGroup | null>("duplicate_group_of", { fileId }),
+  duplicateCounts: (ids: number[]) => invoke<Record<string, number>>("duplicate_counts", { ids }),
+  autoSelectDuplicates: (filter: DupeFilter, safeOnly: boolean) =>
+    invoke<number[]>("auto_select_duplicates", { filter, safeOnly }),
+  ignoreDuplicateGroup: (hash: string, ignore: boolean) => invoke<void>("ignore_duplicate_group", { hash, ignore }),
+  planDedupe: (ids: number[], op: DedupeOp) => invoke<DedupePlan>("plan_dedupe", { ids, op }),
+  dedupe: (ids: number[], op: DedupeOp) => invoke<DedupeResult>("dedupe", { ids, op }),
   excluded: (sourceId: number) => invoke<ExcludedSummary>("excluded", { sourceId }),
   includeAnyway: (sourceId: number, rel: string, reason: ExcludedReason) =>
     invoke<void>("include_anyway", { sourceId, rel, reason }),

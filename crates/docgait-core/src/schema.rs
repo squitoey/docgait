@@ -230,4 +230,11 @@ pub const LIBRARY: &[&str] = &[
        PRIMARY KEY (file_id, tag_id)
      ) WITHOUT ROWID;
      CREATE INDEX file_tag_tag ON file_tag(tag_id);",
+    // 7: exact duplicates. Groups marked "not duplicates" (by content), and the original
+    // modified time for undoing a hard link.
+    "CREATE TABLE dup_ignore (
+       content_hash BLOB PRIMARY KEY,
+       created_at   INTEGER NOT NULL
+     );
+     ALTER TABLE journal ADD COLUMN mtime_ns INTEGER;",
 ];

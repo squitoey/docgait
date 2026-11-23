@@ -3,10 +3,11 @@
 A personal, local-first document manager: merge scattered copies of your files into one organised
 library, remove duplicates, browse and search everything. Nothing leaves your machine.
 
-Status: **M2 complete** (slice 4: organise). Libraries, sources, a names-only background scan with sensible
+Status: **M3 in progress** (slice 1: exact duplicates). Libraries, sources, a names-only background scan with sensible
 excludes, live updates, filename/path search, and **import into the library**: merge several
 copies of your data into one folder without duplicates, with a preview first and undo after,
-then **clean up** the copies once everything is verified to be in the library. The full plan is in
+then **clean up** the copies once everything is verified to be in the library, and find and remove
+**exact duplicates** anywhere. The full plan is in
 [plan/docgait-plan.md](plan/docgait-plan.md).
 
 ## Layout
@@ -63,6 +64,10 @@ docgait import ~/OldLaptop ~/Backup2019     # preview: what would be copied, ski
 docgait import --resume 1 --yes             # do it (or resume an interrupted import)
 docgait check ~/OldLaptop --missing         # how much is already in the library; list the rest
 docgait cleanup ~/OldLaptop --yes           # trash files verified to be in the library
+docgait dupes                               # find exact duplicates everywhere, list the groups
+docgait dupes ~/OldLaptop --safe            # only copies the library already has
+docgait dedupe --safe --yes                 # trash those (dry run without --yes)
+docgait dedupe --hardlink --yes             # or keep every path, store the bytes once
 docgait excluded ~/OldLaptop                # what the scan left out, and why
 docgait include-anyway ~/OldLaptop/secret.env
 docgait conflicts                           # open conflicts and their versions
@@ -136,6 +141,20 @@ A separate step, never part of the import. **Check against library** reports how
 is already in the library (byte-identical, by hash). **Clean up** moves only those files to the
 trash, re-checking each one and its library copy right before, then removes folders it emptied.
 Files the library does not have are never touched. Undo restores everything from the trash.
+
+## Duplicates
+
+**Duplicates** in the sidebar finds byte-identical files across the library and every source.
+Only files that share a size are hashed (size → partial → full BLAKE3, cached), so names-only
+sources stay cheap. Each group suggests a copy to keep (★): the library copy first, then the
+cleanest name (no "copy", "(2)"), the shortest path, the oldest file. Copies on import sources
+that the library already has are marked **safe**; **Select them** picks just those.
+
+Selected copies can be moved to the trash or **replaced with hard links** (same drive; every
+path stays, the bytes are stored once). A plan that would remove every copy of something is
+blocked, every file and the kept copy are re-hashed right before each action, and **Undo** puts
+everything back. **Not duplicates** hides a group for good (by content, so it survives moves).
+Browse shows ×N next to files that have copies, and lists the copies in the details pane.
 
 ### What was left out
 
