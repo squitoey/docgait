@@ -255,8 +255,13 @@ impl Library {
             bail!("cancelled");
         }
 
-        let plan = decide(&entries, incoming, &lib_root, &dest, layout);
-        self.store_plan(&lib_src, &dest, layout, folder_ids, &plan, &entries)
+        let mut plan = decide(&entries, incoming, &lib_root, &dest, layout);
+        let bundles = bundle_items(&entries, &plan, &lib_root);
+        plan.to_copy += bundles.len() as i64;
+        plan.bytes_to_copy += bundles.iter().map(|b| b.size).sum::<i64>();
+        self.store_plan(
+            &lib_src, &dest, layout, folder_ids, &plan, &entries, &bundles,
+        )
     }
 
     /// Every present file under `rel` in `src` (packages are skipped: they are folders).
@@ -465,6 +470,7 @@ impl Library {
         Ok(out)
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn store_plan(
         &self,
         lib_src: &Source,
@@ -473,6 +479,7 @@ impl Library {
         folder_ids: &[i64],
         plan: &Decided,
         entries: &[Entry],
+        bundles: &[BundleItem],
     ) -> Result<ImportPlan> {
         let mut conn = self.writer();
         let tx = conn.transaction()?;
@@ -542,6 +549,22 @@ impl Library {
                     e.full.map(|h| h.to_vec()),
                     it.note,
                     it.conflict.map(|c| conflict_ids[c]),
+                ])?;
+            }
+            let base = plan.items.len();
+            for (i, b) in bundles.iter().enumerate() {
+                stmt.execute(params![
+                    run_id,
+                    (base + i) as i64,
+                    "copy",
+                    None::<i64>,
+                    b.from.to_string_lossy(),
+                    b.to.to_string_lossy().to_string(),
+                    b.size,
+                    b.mtime_ns,
+                    None::<Vec<u8>>,
+                    b.note,
+                    None::<i64>,
                 ])?;
             }
         }
@@ -1098,6 +1121,96 @@ impl Library {
         }
         Ok(res)
     }
+}
+
+// ---- folders that travel with their content ----
+
+/// Excluded from indexing, but part of the folder that holds them: a vault without `.obsidian`
+/// is no longer a vault, a repository without `.git` loses its history. They are copied as a
+/// whole, and only when the destination does not have one yet (never merged).
+const BUNDLES: &[(&str, &str)] = &[
+    (".obsidian", "Obsidian vault settings"),
+    (".git", "Git repository"),
+    (".hg", "Mercurial repository"),
+    (".svn", "Subversion working copy"),
+    (".jj", "Jujutsu repository"),
+];
+
+pub(crate) struct BundleItem {
+    from: PathBuf,
+    to: PathBuf,
+    size: i64,
+    mtime_ns: i64,
+    note: String,
+}
+
+/// Bundle folders next to (or above) copied files, mapped to where those files are going.
+/// Never at the library root itself: that would turn the whole library into one vault or repo.
+fn bundle_items(entries: &[Entry], plan: &Decided, lib_root: &Path) -> Vec<BundleItem> {
+    // Source folder → destination folder, from the files that are copied.
+    let mut dirs: HashMap<PathBuf, PathBuf> = HashMap::new();
+    for it in &plan.items {
+        let (Some(to), "copy") = (&it.to, it.action) else {
+            continue;
+        };
+        let (Some(mut s), Some(mut d)) = (entries[it.entry].abs.parent(), to.parent()) else {
+            continue;
+        };
+        // Ancestors map too, while their names match.
+        loop {
+            dirs.entry(s.to_path_buf())
+                .or_insert_with(|| d.to_path_buf());
+            match (s.parent(), d.parent()) {
+                (Some(sp), Some(dp)) if s.file_name() == d.file_name() => {
+                    s = sp;
+                    d = dp;
+                }
+                _ => break,
+            }
+        }
+    }
+    let mut out = Vec::new();
+    let mut taken: HashSet<PathBuf> = HashSet::new();
+    let mut sorted: Vec<(PathBuf, PathBuf)> = dirs.into_iter().collect();
+    sorted.sort();
+    for (src_dir, dest_dir) in sorted {
+        if dest_dir == lib_root || !dest_dir.starts_with(lib_root) {
+            continue;
+        }
+        for (name, what) in BUNDLES {
+            let from_dir = src_dir.join(name);
+            let to_dir = dest_dir.join(name);
+            if !from_dir.is_dir() || to_dir.exists() || !taken.insert(to_dir.clone()) {
+                continue;
+            }
+            let note = format!("{what}, copied with its folder");
+            let mut stack = vec![from_dir.clone()];
+            while let Some(dir) = stack.pop() {
+                let Ok(rd) = std::fs::read_dir(&dir) else {
+                    continue;
+                };
+                for e in rd.flatten() {
+                    let p = e.path();
+                    let Ok(md) = std::fs::symlink_metadata(&p) else {
+                        continue;
+                    };
+                    if md.is_dir() {
+                        stack.push(p);
+                    } else if md.is_file() {
+                        let rel = p.strip_prefix(&from_dir).unwrap_or(&p);
+                        out.push(BundleItem {
+                            to: to_dir.join(rel),
+                            from: p,
+                            size: md.len() as i64,
+                            mtime_ns: crate::fsmeta::mtime_ns(&md),
+                            note: note.clone(),
+                        });
+                    }
+                }
+            }
+        }
+    }
+    out
 }
 
 // ---- deciding ----

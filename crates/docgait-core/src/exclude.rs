@@ -13,6 +13,35 @@ use ignore::WalkBuilder;
 /// ignore file, so `!pattern` can bring back something `.gitignore` excludes.
 pub const DOCGAIT_IGNORE: &str = ".docgaitignore";
 
+/// Files that decide what else in their folder gets indexed.
+const CONTROL_FILES: &[&str] = &[
+    ".gitignore",
+    ".ignore",
+    ".rgignore",
+    DOCGAIT_IGNORE,
+    "CACHEDIR.TAG",
+];
+
+pub fn is_ignore_file(path: &Path) -> bool {
+    path.file_name()
+        .is_some_and(|n| CONTROL_FILES.iter().any(|c| n == *c))
+}
+
+/// An ignore file whose folder still holds something else. Removing it would change what gets
+/// indexed there (e.g. a `build/` folder it hides would suddenly show up), so clean-up and
+/// duplicate removal leave it alone.
+pub fn ignore_file_in_use(path: &Path) -> bool {
+    if !is_ignore_file(path) {
+        return false;
+    }
+    let Some(dir) = path.parent() else {
+        return false;
+    };
+    std::fs::read_dir(dir)
+        .map(|rd| rd.flatten().any(|e| !is_ignore_file(&e.path())))
+        .unwrap_or(false)
+}
+
 /// Folder names that are always skipped (matched against the entry's name).
 pub const DEFAULT_DIRS: &[&str] = &[
     // SCM metadata. The working files of a repository are still indexed.

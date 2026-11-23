@@ -61,6 +61,7 @@ export interface CleanupResult {
   bytes: number;
   skipped: number;
   folders_removed: number;
+  kept_ignore_files: number;
   errors: string[];
   cancelled: boolean;
 }

@@ -463,6 +463,12 @@ fn run(cli: Cli) -> Result<()> {
                 r.skipped,
                 r.batch_id
             );
+            if r.kept_ignore_files > 0 {
+                println!(
+                    "kept {} ignore file(s): their folders still hold excluded files",
+                    r.kept_ignore_files
+                );
+            }
             for e in r.errors {
                 println!("  {e}");
             }
