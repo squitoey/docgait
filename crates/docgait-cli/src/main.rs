@@ -111,6 +111,21 @@ enum Cmd {
         /// The excluded file or folder.
         path: PathBuf,
     },
+    /// Open conflicts in the library (same path, different contents).
+    Conflicts,
+    /// Resolve a conflict: keep-current, keep <variant path>, or mark (close without changes).
+    Resolve {
+        id: i64,
+        #[arg(value_enum)]
+        how: ResolveArg,
+        /// The version to keep (for `keep`).
+        path: Option<String>,
+    },
+    /// Keep the suggested version of every conflict that has a clear suggestion.
+    AcceptSuggestions {
+        #[arg(long)]
+        yes: bool,
+    },
     /// Recent imports and other undoable actions.
     History,
     /// Undo an import (or other action) by its batch number from `docgait history`.
@@ -190,6 +205,13 @@ enum LevelArg {
     Names,
     Full,
     Agent,
+}
+
+#[derive(Clone, Copy, ValueEnum)]
+enum ResolveArg {
+    KeepCurrent,
+    Keep,
+    Mark,
 }
 
 #[derive(Clone, Copy, ValueEnum)]
@@ -414,6 +436,52 @@ fn run(cli: Cli) -> Result<()> {
             })?;
             lib.include_anyway(source.id, &rel, entry.reason)?;
             println!("{rel} is indexed now");
+            Ok(())
+        }
+        Cmd::Conflicts => {
+            let cs = lib.conflicts(false)?;
+            if cs.is_empty() {
+                println!("no open conflicts");
+            }
+            for c in cs {
+                println!("{:>4}  [{}]  {}", c.id, c.state, c.path);
+                for v in c.variants {
+                    println!(
+                        "        {} {}  {}  ({}, {})",
+                        if v.is_current { "*" } else { " " },
+                        v.path,
+                        v.origin,
+                        human(v.size),
+                        if v.exists { "here" } else { "missing" }
+                    );
+                }
+            }
+            Ok(())
+        }
+        Cmd::Resolve { id, how, path } => {
+            let r = match how {
+                ResolveArg::KeepCurrent => docgait_core::Resolution::KeepCurrent,
+                ResolveArg::Mark => docgait_core::Resolution::MarkResolved,
+                ResolveArg::Keep => docgait_core::Resolution::KeepVariant {
+                    path: path.ok_or_else(|| anyhow::anyhow!("name the version to keep"))?,
+                },
+            };
+            let batch = lib.resolve_conflict(id, &r)?;
+            println!("resolved conflict {id}. Undo with `docgait undo {batch}`.");
+            Ok(())
+        }
+        Cmd::AcceptSuggestions { yes } => {
+            if !yes {
+                let n = lib
+                    .conflicts(false)?
+                    .iter()
+                    .filter(|c| c.state == "suggested")
+                    .count();
+                println!("would keep the suggested version of {n} conflicts (the others go to the trash). Add --yes.");
+                return Ok(());
+            }
+            let (batch, n) = lib.accept_suggestions()?;
+            println!("resolved {n} conflicts. Undo with `docgait undo {batch}`.");
             Ok(())
         }
         Cmd::History => {

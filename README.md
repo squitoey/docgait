@@ -3,7 +3,7 @@
 A personal, local-first document manager: merge scattered copies of your files into one organised
 library, remove duplicates, browse and search everything. Nothing leaves your machine.
 
-Status: **M2, slice 2**. Libraries, sources, a names-only background scan with sensible
+Status: **M2, slice 3**. Libraries, sources, a names-only background scan with sensible
 excludes, live updates, filename/path search, and **import into the library**: merge several
 copies of your data into one folder without duplicates, with a preview first and undo after,
 then **clean up** the copies once everything is verified to be in the library. The full plan is in
@@ -61,7 +61,10 @@ docgait check ~/OldLaptop --missing         # how much is already in the library
 docgait cleanup ~/OldLaptop --yes           # trash files verified to be in the library
 docgait excluded ~/OldLaptop                # what the scan left out, and why
 docgait include-anyway ~/OldLaptop/secret.env
-docgait history                             # imports and clean-ups so far
+docgait conflicts                           # open conflicts and their versions
+docgait resolve 4 keep <path>               # keep one version (keep-current, keep, mark)
+docgait accept-suggestions --yes            # keep the suggested version everywhere it is clear
+docgait history                             # imports, clean-ups and resolutions so far
 docgait undo 1 --yes                        # undo an import: its copies go to the trash
 docgait libraries create Work               # libraries are fully separate
 docgait -L Work scan ~/WorkDrive
@@ -88,6 +91,18 @@ Pick sources (or folders inside them) and merge them into the library folder:
 - Nothing is copied until you confirm. Every copy is verified by hash, written under a temporary
   name first, and journaled. An interrupted import resumes; a whole import can be undone (copies
   go to the trash, renames are reversed). Sources are never changed.
+
+### Conflicts
+
+The **Conflicts** tab lists every open conflict (sidebar badge shows how many). For each one:
+**Keep this one** (the others go to the trash), **Keep all** (conflict files get normal names),
+**Merge…** for text files, or **Mark resolved**. **Accept all suggestions** resolves every conflict
+with a clear winner in one step. The merge editor shows the current version, the editable result
+and the other version side by side; disagreements are marked `<<<<<<<` / `=======` / `>>>>>>>`
+with *use left / use right / use both* per block. With three or more versions, the oldest is used
+as the common base for a three-way merge, so changes that don't overlap merge on their own.
+Conflict files found in the library that docgait didn't create (e.g. after a rebuild) are picked
+up by their `.conflict-` marker. Every resolution can be undone.
 
 ### Clean up afterwards
 
