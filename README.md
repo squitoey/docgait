@@ -23,19 +23,23 @@ then **clean up** the copies once everything is verified to be in the library. T
 Needs Rust, Node and pnpm. If `cargo` is not on your PATH: `. "$HOME/.cargo/env"`.
 
 ```sh
-cargo build --release -p docgait-cli                  # -> target/release/docgait
-cd apps/desktop && pnpm install && pnpm tauri build  # macOS: target/release/bundle/macos/docgait.app
+make build   # CLI -> target/release/docgait; app -> target/release/bundle/macos/docgait.app (.deb on Linux)
+make run     # build and open the app
+make dev     # app with hot reload
+make test    # Rust tests
+make lint    # the CI lint checks
+make check   # lint + test
+make fmt     # format everything
+make help    # list targets
 ```
-
-During development: `cd apps/desktop && pnpm tauri dev`. Tests: `cargo test --workspace`.
 
 ### Debian
 
 ```sh
 sudo apt install build-essential pkg-config libwebkit2gtk-4.1-dev libgtk-3-dev librsvg2-dev \
   libayatana-appindicator3-dev libssl-dev libxdo-dev patchelf file
-cd apps/desktop && pnpm install && pnpm tauri build --bundles deb
-sudo apt install ../../target/release/bundle/deb/docgait_*.deb
+make build
+sudo apt install ./target/release/bundle/deb/docgait_*.deb
 ```
 
 CI builds the `.deb` on `debian:bookworm` on every push (artifact `docgait-deb`).
