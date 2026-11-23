@@ -364,7 +364,7 @@ fn write_batch(
 }
 
 /// Id of the folder at `rel`, creating it (and any missing parents) and marking it seen.
-fn ensure_folder(
+pub(crate) fn ensure_folder(
     conn: &Connection,
     source_id: i64,
     gen: i64,

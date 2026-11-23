@@ -87,7 +87,7 @@ fn finds_by_name_path_and_filters() {
     assert_eq!(names(&lib, "w2"), vec!["Taxes/2024/W2 draft.pdf"]);
     // Empty and filter-only-unsupported queries return nothing, with a note.
     assert!(lib.search("", 10).unwrap().hits.is_empty());
-    let r = lib.search("tag:receipts", 10).unwrap();
+    let r = lib.search("person:jane", 10).unwrap();
     assert!(r.hits.is_empty());
     assert_eq!(r.unsupported.len(), 1);
 }

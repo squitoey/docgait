@@ -11,8 +11,8 @@ use docgait_core::watch::{self, SourceWatcher};
 use docgait_core::{
     scan, App, BatchInfo, CleanupResult, ConflictView, Coverage, Cursor, ExcludedSummary,
     ImportItem, ImportPlan, ImportProgress, ImportResult, IndexLevel, Layout, Library, LibraryInfo,
-    Listing, Match, MergeStart, Resolution, Role, ScanProgress, ScanSummary, SearchResults, SortBy,
-    Source, Status, UndoResult,
+    Listing, Match, MergeStart, OrganiseOp, OrganisePlan, OrganiseResult, Resolution, Role,
+    ScanProgress, ScanSummary, SearchResults, SortBy, Source, Status, TagCount, UndoResult,
 };
 use serde::Serialize;
 use tauri::{AppHandle, Emitter, Manager, State};
@@ -524,6 +524,103 @@ fn open_conflict_file(state: State<AppState>, path: String) -> CmdResult<()> {
 }
 
 #[tauri::command(async)]
+fn plan_organise(state: State<AppState>, ops: Vec<OrganiseOp>) -> CmdResult<OrganisePlan> {
+    state.lib().plan_organise(&ops).map_err(err)
+}
+
+#[tauri::command(async)]
+fn organise(
+    handle: AppHandle,
+    state: State<AppState>,
+    ops: Vec<OrganiseOp>,
+    description: String,
+) -> CmdResult<OrganiseResult> {
+    let lib = state.lib();
+    let res = lib.organise(&ops, &description).map_err(err);
+    let _ = handle.emit(
+        "index-changed",
+        ChangedEvent {
+            library_id: lib.info.id,
+        },
+    );
+    res
+}
+
+#[tauri::command(async)]
+fn preview_template(
+    state: State<AppState>,
+    folder_id: i64,
+    dest_folder_id: i64,
+    template: String,
+) -> CmdResult<OrganisePlan> {
+    let lib = state.lib();
+    let ids = lib.file_ids_under(folder_id).map_err(err)?;
+    lib.preview_template(&ids, dest_folder_id, &template)
+        .map_err(err)
+}
+
+#[tauri::command(async)]
+fn organise_by_template(
+    handle: AppHandle,
+    state: State<AppState>,
+    folder_id: i64,
+    dest_folder_id: i64,
+    template: String,
+) -> CmdResult<OrganiseResult> {
+    let lib = state.lib();
+    let ids = lib.file_ids_under(folder_id).map_err(err)?;
+    let res = lib
+        .organise_by_template(&ids, dest_folder_id, &template)
+        .map_err(err);
+    let _ = handle.emit(
+        "index-changed",
+        ChangedEvent {
+            library_id: lib.info.id,
+        },
+    );
+    res
+}
+
+/// The indexed folder for a path picked in the folder dialog.
+#[tauri::command(async)]
+fn folder_for_path(state: State<AppState>, path: String) -> CmdResult<i64> {
+    state
+        .lib()
+        .folder_for_path(Path::new(&path))
+        .map(|f| f.id)
+        .map_err(err)
+}
+
+#[tauri::command(async)]
+fn folder_path(state: State<AppState>, folder_id: i64) -> CmdResult<String> {
+    state
+        .lib()
+        .folder_path(folder_id)
+        .map(|p| p.to_string_lossy().to_string())
+        .map_err(err)
+}
+
+#[tauri::command(async)]
+fn tags(state: State<AppState>) -> CmdResult<Vec<TagCount>> {
+    state.lib().tags().map_err(err)
+}
+
+#[tauri::command(async)]
+fn file_tags(state: State<AppState>, file_id: i64) -> CmdResult<Vec<String>> {
+    state.lib().file_tags(file_id).map_err(err)
+}
+
+#[tauri::command(async)]
+fn add_tag(state: State<AppState>, file_ids: Vec<i64>, tag: String) -> CmdResult<()> {
+    state.lib().add_tag(&file_ids, &tag).map_err(err)
+}
+
+#[tauri::command(async)]
+fn remove_tag(state: State<AppState>, file_ids: Vec<i64>, tag: String) -> CmdResult<()> {
+    state.lib().remove_tag(&file_ids, &tag).map_err(err)
+}
+
+#[tauri::command(async)]
 fn history(state: State<AppState>) -> CmdResult<Vec<BatchInfo>> {
     state.lib().history(50).map_err(err)
 }
@@ -733,6 +830,16 @@ fn main() {
             import_items,
             history,
             undo_batch,
+            plan_organise,
+            organise,
+            preview_template,
+            organise_by_template,
+            folder_for_path,
+            folder_path,
+            tags,
+            file_tags,
+            add_tag,
+            remove_tag,
             conflicts,
             conflict_count,
             resolve_conflict,

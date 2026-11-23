@@ -168,6 +168,7 @@ export default function App() {
             folderId={view.folderId}
             highlight={view.highlight}
             revision={revision}
+            onChanged={refresh}
             onNavigate={(folderId) => setView({ kind: "browse", folderId })}
             onError={setMessage}
           />

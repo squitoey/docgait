@@ -219,4 +219,15 @@ pub const LIBRARY: &[&str] = &[
      );",
     // 5: which batch resolved a conflict, so undoing it reopens the conflict.
     "ALTER TABLE conflict ADD COLUMN resolved_batch_id INTEGER;",
+    // 6: tags.
+    "CREATE TABLE tag (
+       id    INTEGER PRIMARY KEY,
+       name  TEXT NOT NULL UNIQUE COLLATE NOCASE
+     );
+     CREATE TABLE file_tag (
+       file_id INTEGER NOT NULL REFERENCES file(id) ON DELETE CASCADE,
+       tag_id  INTEGER NOT NULL REFERENCES tag(id) ON DELETE CASCADE,
+       PRIMARY KEY (file_id, tag_id)
+     ) WITHOUT ROWID;
+     CREATE INDEX file_tag_tag ON file_tag(tag_id);",
 ];

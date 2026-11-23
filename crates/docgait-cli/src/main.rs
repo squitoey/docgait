@@ -126,6 +126,36 @@ enum Cmd {
         #[arg(long)]
         yes: bool,
     },
+    /// Move files or folders (inside sources) into a folder. A dry run unless --yes.
+    Mv {
+        #[arg(required = true, num_args = 2..)]
+        paths: Vec<PathBuf>,
+        #[arg(long)]
+        yes: bool,
+    },
+    /// Rename a file or folder.
+    Rename { path: PathBuf, new_name: String },
+    /// Create a folder inside a source.
+    Mkdir { path: PathBuf },
+    /// Move the files under a folder into a structure made from a template, e.g.
+    /// "{kind}/{year}/{month}". Tokens: {year} {month} {day} {kind} {ext} {tag} {folder} {source}.
+    Organise {
+        folder: PathBuf,
+        template: String,
+        /// Where the structure goes (default: the folder itself).
+        #[arg(long)]
+        into: Option<PathBuf>,
+        #[arg(long)]
+        yes: bool,
+    },
+    /// Tag files: `docgait tag add receipts a.pdf b.pdf`, `remove`, or `list` (all tags).
+    Tag {
+        #[arg(value_enum)]
+        action: TagAction,
+        /// The tag (not needed for list).
+        tag: Option<String>,
+        files: Vec<PathBuf>,
+    },
     /// Recent imports and other undoable actions.
     History,
     /// Undo an import (or other action) by its batch number from `docgait history`.
@@ -205,6 +235,13 @@ enum LevelArg {
     Names,
     Full,
     Agent,
+}
+
+#[derive(Clone, Copy, ValueEnum)]
+enum TagAction {
+    Add,
+    Remove,
+    List,
 }
 
 #[derive(Clone, Copy, ValueEnum)]
@@ -484,6 +521,107 @@ fn run(cli: Cli) -> Result<()> {
             println!("resolved {n} conflicts. Undo with `docgait undo {batch}`.");
             Ok(())
         }
+        Cmd::Mv { mut paths, yes } => {
+            let dest = paths.pop().expect("clap guarantees two paths");
+            let dest_id = lib.folder_for_path(&dest)?.id;
+            let (mut file_ids, mut folder_ids) = (Vec::new(), Vec::new());
+            for p in &paths {
+                if p.is_dir() {
+                    folder_ids.push(lib.folder_for_path(p)?.id);
+                } else {
+                    file_ids.push(file_id_for(&lib, p)?);
+                }
+            }
+            let ops = [docgait_core::OrganiseOp::Move {
+                file_ids,
+                folder_ids,
+                dest_folder_id: dest_id,
+            }];
+            run_ops(&lib, &ops, "Move", yes)
+        }
+        Cmd::Rename { path, new_name } => {
+            let op = if path.is_dir() {
+                docgait_core::OrganiseOp::Rename {
+                    file_id: None,
+                    folder_id: Some(lib.folder_for_path(&path)?.id),
+                    name: new_name,
+                }
+            } else {
+                docgait_core::OrganiseOp::Rename {
+                    file_id: Some(file_id_for(&lib, &path)?),
+                    folder_id: None,
+                    name: new_name,
+                }
+            };
+            run_ops(&lib, &[op], "Rename", true)
+        }
+        Cmd::Mkdir { path } => {
+            let parent = path
+                .parent()
+                .ok_or_else(|| anyhow::anyhow!("no parent folder"))?;
+            let name = path
+                .file_name()
+                .ok_or_else(|| anyhow::anyhow!("no folder name"))?
+                .to_string_lossy()
+                .to_string();
+            let op = docgait_core::OrganiseOp::Mkdir {
+                parent_folder_id: lib.folder_for_path(parent)?.id,
+                name,
+            };
+            run_ops(&lib, &[op], "New folder", true)
+        }
+        Cmd::Organise {
+            folder,
+            template,
+            into,
+            yes,
+        } => {
+            let f = lib.folder_for_path(&folder)?;
+            let dest = match into {
+                Some(p) => lib.folder_for_path(&p)?.id,
+                None => f.id,
+            };
+            let ids = lib.file_ids_under(f.id)?;
+            if !yes {
+                let plan = lib.preview_template(&ids, dest, &template)?;
+                print_plan(&plan);
+                println!("dry run: add --yes to do it.");
+                return Ok(());
+            }
+            let r = lib.organise_by_template(&ids, dest, &template)?;
+            print_result(&r);
+            Ok(())
+        }
+        Cmd::Tag { action, tag, files } => match action {
+            TagAction::List => {
+                for t in lib.tags()? {
+                    println!("{:>6}  {}", t.files, t.name);
+                }
+                Ok(())
+            }
+            TagAction::Add | TagAction::Remove => {
+                let tag = tag.ok_or_else(|| anyhow::anyhow!("name the tag"))?;
+                let ids = files
+                    .iter()
+                    .map(|p| file_id_for(&lib, p))
+                    .collect::<Result<Vec<_>>>()?;
+                if matches!(action, TagAction::Add) {
+                    lib.add_tag(&ids, &tag)?;
+                } else {
+                    lib.remove_tag(&ids, &tag)?;
+                }
+                println!(
+                    "{} {} file(s)",
+                    if matches!(action, TagAction::Add) {
+                        "tagged"
+                    } else {
+                        "untagged"
+                    },
+                    ids.len()
+                );
+                Ok(())
+            }
+        },
         Cmd::History => {
             let h = lib.history(30)?;
             if h.is_empty() {
@@ -838,6 +976,73 @@ fn import_cmd(
     for e in res.errors {
         println!("  {e}");
     }
+    Ok(())
+}
+
+fn file_id_for(lib: &Library, path: &std::path::Path) -> Result<i64> {
+    let parent = path
+        .parent()
+        .ok_or_else(|| anyhow::anyhow!("{} has no folder", path.display()))?;
+    let folder = lib.folder_for_path(parent)?;
+    let name = path
+        .file_name()
+        .ok_or_else(|| anyhow::anyhow!("no file name"))?
+        .to_string_lossy()
+        .to_string();
+    let mut after = None;
+    loop {
+        let page = lib.list(folder.id, SortBy::Name, after.as_ref(), 5000)?;
+        if let Some(f) = page.files.iter().find(|f| f.name == name) {
+            return Ok(f.id);
+        }
+        match page.next {
+            Some(c) => after = Some(c),
+            None => bail!(
+                "{} is not indexed (excluded, or scan first)",
+                path.display()
+            ),
+        }
+    }
+}
+
+fn print_plan(plan: &docgait_core::OrganisePlan) {
+    for s in &plan.steps {
+        match s.op.as_str() {
+            "mkdir" => println!("  new folder {}", s.to.as_deref().unwrap_or("")),
+            "trash" => println!("  trash {}", s.from.as_deref().unwrap_or("")),
+            _ => println!(
+                "  {} → {}",
+                s.from.as_deref().unwrap_or(""),
+                s.to.as_deref().unwrap_or("")
+            ),
+        }
+    }
+    for n in &plan.notes_to_update {
+        println!("  update links in {n}");
+    }
+    for w in &plan.warnings {
+        println!("  warning: {w}");
+    }
+}
+
+fn print_result(r: &docgait_core::OrganiseResult) {
+    println!(
+        "moved {}, created {}, trashed {}, notes updated {}, failed {}. Undo with `docgait undo {}`.",
+        r.moved, r.created, r.trashed, r.notes_updated, r.failed, r.batch_id
+    );
+    for e in &r.errors {
+        println!("  {e}");
+    }
+}
+
+fn run_ops(lib: &Library, ops: &[docgait_core::OrganiseOp], what: &str, yes: bool) -> Result<()> {
+    if !yes {
+        print_plan(&lib.plan_organise(ops)?);
+        println!("dry run: add --yes to do it.");
+        return Ok(());
+    }
+    let r = lib.organise(ops, what)?;
+    print_result(&r);
     Ok(())
 }
 

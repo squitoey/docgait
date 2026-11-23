@@ -13,9 +13,12 @@ pub mod hash;
 pub mod import;
 pub mod kind;
 pub mod library;
+pub mod obsidian;
+pub mod organise;
 pub mod scan;
 pub mod schema;
 pub mod search;
+pub mod tags;
 mod trash;
 pub mod watch;
 
@@ -29,5 +32,7 @@ pub use import::{
 pub use library::{
     Cursor, FileEntry, Folder, IndexLevel, Library, Listing, Role, SortBy, Source, Status,
 };
+pub use organise::{OrganiseOp, OrganisePlan, OrganiseResult, PlannedStep};
 pub use scan::{ScanProgress, ScanSummary};
 pub use search::{SearchHit, SearchResults};
+pub use tags::TagCount;

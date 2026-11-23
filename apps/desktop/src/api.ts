@@ -242,6 +242,40 @@ export interface MergeStart {
   clean: boolean;
 }
 
+export type OrganiseOp =
+  | { type: "move"; file_ids: number[]; folder_ids: number[]; dest_folder_id: number }
+  | { type: "rename"; file_id: number | null; folder_id: number | null; name: string }
+  | { type: "mkdir"; parent_folder_id: number; name: string }
+  | { type: "trash"; file_ids: number[]; folder_ids: number[] };
+
+export interface PlannedStep {
+  op: "mkdir" | "move" | "trash";
+  from: string | null;
+  to: string | null;
+  is_dir: boolean;
+}
+
+export interface OrganisePlan {
+  steps: PlannedStep[];
+  notes_to_update: string[];
+  warnings: string[];
+}
+
+export interface OrganiseResult {
+  batch_id: number;
+  moved: number;
+  created: number;
+  trashed: number;
+  notes_updated: number;
+  failed: number;
+  errors: string[];
+}
+
+export interface TagCount {
+  name: string;
+  files: number;
+}
+
 export interface ScanProgress {
   library_id: number;
   source_id: number;
@@ -305,6 +339,18 @@ export const api = {
   acceptSuggestions: () => invoke<[number, number]>("accept_suggestions"),
   mergeStart: (id: number, variant: string) => invoke<MergeStart>("merge_start", { id, variant }),
   openConflictFile: (path: string) => invoke<void>("open_conflict_file", { path }),
+  planOrganise: (ops: OrganiseOp[]) => invoke<OrganisePlan>("plan_organise", { ops }),
+  organise: (ops: OrganiseOp[], description: string) => invoke<OrganiseResult>("organise", { ops, description }),
+  previewTemplate: (folderId: number, destFolderId: number, template: string) =>
+    invoke<OrganisePlan>("preview_template", { folderId, destFolderId, template }),
+  organiseByTemplate: (folderId: number, destFolderId: number, template: string) =>
+    invoke<OrganiseResult>("organise_by_template", { folderId, destFolderId, template }),
+  folderForPath: (path: string) => invoke<number>("folder_for_path", { path }),
+  folderPath: (folderId: number) => invoke<string>("folder_path", { folderId }),
+  tags: () => invoke<TagCount[]>("tags"),
+  fileTags: (fileId: number) => invoke<string[]>("file_tags", { fileId }),
+  addTag: (fileIds: number[], tag: string) => invoke<void>("add_tag", { fileIds, tag }),
+  removeTag: (fileIds: number[], tag: string) => invoke<void>("remove_tag", { fileIds, tag }),
   history: () => invoke<BatchInfo[]>("history"),
   undoBatch: (batchId: number) => invoke<UndoResult>("undo_batch", { batchId }),
   search: (query: string, limit?: number) => invoke<SearchResults>("search", { query, limit }),

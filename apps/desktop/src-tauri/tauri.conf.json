@@ -9,7 +9,16 @@
     "frontendDist": "../dist"
   },
   "app": {
-    "windows": [{ "title": "docgait", "width": 1280, "height": 860, "minWidth": 900, "minHeight": 600 }],
+    "windows": [
+      {
+        "title": "docgait",
+        "width": 1280,
+        "height": 860,
+        "minWidth": 900,
+        "minHeight": 600,
+        "dragDropEnabled": false
+      }
+    ],
     "security": {
       "csp": "default-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline'; connect-src 'self' ipc: http://ipc.localhost"
     }
